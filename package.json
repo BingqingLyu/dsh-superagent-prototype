@@ -48,7 +48,8 @@
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "start:codex": "node lib/codex-cli.js"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
@@ -56,6 +57,7 @@
   },
   "packageManager": "pnpm@11.7.0",
   "dependencies": {
+    "dingtalk-stream": "2.1.6-beta.1",
     "proper-lockfile": "4.1.2",
     "zod": "4.4.3"
   },

@@ -237,6 +237,20 @@ export class Sessions {
     if (!master && !ticket) { this.limitSubagent(agent); return }
     const binding: SessionBinding = { disposers: [] }
     this.bindings.set(agent, binding)
+    const codex = this.ctx.get('codexHarness')
+    if (codex) {
+      // Keep the original prompts, role tools and report/reply flow; only the host transport differs.
+      binding.disposers.push(codex.bind(agent, () => {
+        const version = this.promptFor(agent, true)
+        const current = ticket && host.store.tickets.get(ticket.id)
+        return `[dsh-superagent prompt revision ${version.revision}]\n${host.prompts.compose(version.config,
+          master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)}\n${current ? mandateInstructions(current.mandate) : ''}`
+      }, host.tools(agent, ticket), () => {
+        const current = ticket && host.store.tickets.get(ticket.id)
+        return ticket && (!current || !liveTicket(current)) ? 'Ticket ended; new work needs a new authorized ticket' : undefined
+      }))
+      return
+    }
     this.retryHealth.restore(agent.id, agent.session.snapshotEvents())
     if (agent.status === 'idle') this.retryHealth.clear(agent.id)
     this.updateModelHealth()

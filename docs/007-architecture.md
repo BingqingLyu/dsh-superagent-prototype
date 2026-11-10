@@ -291,6 +291,10 @@ Some generic modules still refer directly to GitHub or Feishu:
 | Path | Responsibility |
 | --- | --- |
 | `src/index.ts` | The main plugin entry: reads the machine settings, starts the Runtime, and gives it the restart that a save of a Source's account uses |
+| `src/codex-cli.ts` | Boots the original Runtime with the Codex host adapter and DingTalk Source; seeds original installation settings on first use |
+| `src/harness/codex.ts` | Translates host session, inbox, persistence and agent-event services into Codex calls; binds original role tools and prompts |
+| `src/harness/codex-rpc.ts` | Codex app-server stdio RPC, persisted thread/message IDs, turn start/steer/resume/interrupt and dynamic-tool dispatch |
+| `src/sources/dingtalk.ts` | DingTalk Stream group-mention Source for all message types, rich-text normalization and reply channel, registered with the original SourceRegistry |
 | `src/deployment.ts` | The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the repository and the accounts from the Source settings, each CLI run as Executor shells run it; `SETUP_FIELDS` lists the Source fields setup reads. The code names no person, account or organization |
 | `src/setup.ts` | Setup problems: `SetupError`, with a code, the place that fixes it and the English text the log, the main Session and the panel share |
 | `src/policy.ts` | The Policy: the settings schemas by block, the Policy version, the gate and Mandate revalidation |
@@ -424,6 +428,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/delivery.spec.ts` | `AgentDelivery` |
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
 | `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
+| `tests/codex-harness.spec.ts` | The original Runtime and tools on the Codex host boundary: blocker relays, main-owned result delivery and DingTalk source isolation; optional real-model smoke |
+| `tests/codex-rpc.spec.ts` | Bidirectional Codex RPC with a subprocess fixture, scoped tools, disabled subagents and deduplicated delivery |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |
 | `tests/http.spec.ts` | The same-origin and loopback checks, the status of each kind of failure, the body limit, path parameters and queries |

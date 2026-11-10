@@ -1,0 +1,6 @@
+# Shared native Codex policy for read-only PR inspection using the host's configured gh identity.
+prefix_rule(
+    pattern = ["gh", "pr", ["list", "view", "checks"]],
+    decision = "allow",
+    justification = "Read-only GitHub PR inspection may use the host credential store; keep other commands sandboxed.",
+)
