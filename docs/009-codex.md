@@ -4,6 +4,8 @@ This entry boots the existing `src/app/runtime.ts`. It uses the original Store, 
 
 Worker reports still go through `orchestrator_report → reportRelay → main Session`. The main Session decides whether to continue, ask for human action, answer a question or deliver a result through `orchestrator_reply`. Ordinary progress stays internal. A blocked/failed report without a question still reaches the main Session.
 
+Optional DingTalk AI receipt and native reply cards display a waiting receipt before model processing and provide a reply button/input on every feedback card. See `cards/README.md`, publish the supplied [template](../cards/dingtalk-superagent.json), and set `DINGTALK_CARD_TEMPLATE_ID` to enable this mode; text mode remains the default.
+
 ## Install and start
 
 Requires Node 22.19+, a Codex CLI with app-server dynamic tools, and the original GitHub setup: an authenticated `gh` executable with push access to the configured repository. The desktop application does not need to run. This preserves the original repository/account checks.
@@ -56,7 +58,7 @@ The database is `state-codex/orchestrator.sqlite`. Codex thread IDs, durable inb
 ## First-version boundaries
 
 - Only group @ messages enter the Source; private messages and ordinary group messages remain outside scope. All message types are admitted: plain text, rich text, image, audio, video, file and unknown types. Rich text is projected in its original order, and supplied audio transcription/file names are retained. Binary attachments currently produce explicit unparsed-content markers; their native body/references are retained in Source KV, but are not automatically downloaded or interpreted.
-- Follow up with `@robot #<12-character-ticket-id> ...`. References associate only within their originating group. Native quoted-message association is not implemented.
+- In text mode, follow up with `@robot #<12-character-ticket-id> ...`. In AI card mode, **回复** prepares a real robot mention and task reference in the group input; add text and send normally. Native input support must be verified in the real client as described in `cards/README.md`. References associate only within their originating group. Native quoted-message association is not implemented.
 - No subagents: Codex multi-agent features are disabled, and no subagent service/tools are exposed.
 - Built-in Codex coding tools use the configured sandbox. Original orchestrator tools keep their original schemas and handlers.
 - Native command events feed the original worker-slot/background-work tracking. Codex's terminal cleanup API operates on a whole thread, so stopping one native background job cleans that thread's background terminals together.

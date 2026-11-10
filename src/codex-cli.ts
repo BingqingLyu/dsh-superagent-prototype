@@ -77,7 +77,8 @@ async function main(): Promise<void> {
     runtime.sources.register(kind)
     await runtime.ready
     if (!runtime.configured()) throw new Error(`Setup: ${runtime.setupProblem?.detail ?? 'not configured'}`)
-    robot = new DingTalk(runtime.context(kind), { clientId, clientSecret }, log)
+    robot = new DingTalk(runtime.context(kind), { clientId, clientSecret }, log, fetch,
+      process.env.DINGTALK_CARD_TEMPLATE_ID, process.env.DINGTALK_ROBOT_NAME)
     await harness.listen()
     await robot.start()
     for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void stop().catch(() => { process.exitCode = 1 }) })

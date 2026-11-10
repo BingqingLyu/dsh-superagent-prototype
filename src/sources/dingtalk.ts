@@ -5,6 +5,7 @@ import { key, type Trigger, type OutboundMessage } from '../core/index.ts'
 import { family } from '../kv.ts'
 import type { SourceContext } from './host.ts'
 import type { SourceKind } from './kind.ts'
+import { DingTalkCards } from './dingtalk-cards.ts'
 
 const routes = family<Route, [string]>('dingtalk-route:')
 const tickets = family<string, [string, string]>('dingtalk-ticket:')
@@ -65,8 +66,9 @@ export function dingTalkTrigger(raw: unknown, context: SourceContext): { trigger
   return {
     trigger: { id, source: 'dingtalk', threads, actor: { source: 'dingtalk', id: message.senderStaffId }, human: true,
       addressed: 'mention', at: new Date(message.createAt ?? Date.now()).toISOString(), text,
-      channel: { source: 'dingtalk', thread: `dingtalk:${conversation}`, address: { conversationId: conversation } },
-      meta: { conversationId: conversation, conversationType: '2', senderCorpId: message.senderCorpId, messageId: message.msgId, messageType: message.msgtype,
+      channel: { source: 'dingtalk', thread: `dingtalk:${conversation}`, address: { conversationId: conversation, triggerId: id } },
+      meta: { conversationId: conversation, conversationType: '2', senderCorpId: message.senderCorpId, robotCode: message.robotCode,
+        messageId: message.msgId, messageType: message.msgtype, chatbotUserId: message.chatbotUserId,
         ...(reference ? { ticketReference: reference, referenceResolved: matches.length === 1 } : {}) } },
     route: { webhook: message.sessionWebhook, expires: message.sessionWebhookExpiredTime, robotCode: message.robotCode, conversationId: conversation },
     ...(message.content !== undefined ? { body: { messageType: message.msgtype, content: message.content } } : {}),
@@ -76,11 +78,15 @@ export function dingTalkTrigger(raw: unknown, context: SourceContext): { trigger
 /** Translates DingTalk Stream callbacks and group sends through the original SourceContext boundary. */
 export class DingTalk {
   private readonly client: DWClient
+  private readonly cards?: DingTalkCards
   private token?: { value: string; until: number }
   constructor(private readonly context: SourceContext, private readonly credentials: { clientId: string; clientSecret: string },
     private readonly log: (event: string) => void,
-    private readonly http: typeof fetch = fetch) {
+    private readonly http: typeof fetch = fetch, cardTemplateId?: string, robotName = 'Super agent') {
     this.client = new DWClient({ ...credentials, debug: false, keepAlive: true })
+    if (cardTemplateId) {
+      this.cards = new DingTalkCards(context, cardTemplateId, () => this.accessToken(), http, credentials.clientId, robotName)
+    }
     this.client.registerCallbackListener(TOPIC_ROBOT, async frame => {
       try {
         const parsed = dingTalkTrigger(JSON.parse(frame.data), context)
@@ -88,7 +94,10 @@ export class DingTalk {
           context.state.set(routes(parsed.route.conversationId), parsed.route)
           // Preserve native content/attachment references in the original Source KV, separate from model text.
           if (parsed.body) context.state.set(bodies(parsed.trigger.id), parsed.body)
-          return context.receive(parsed.trigger)
+          const result = context.receive(parsed.trigger)
+          if (result instanceof Promise) throw new Error('DingTalk intake must commit synchronously')
+          if (result === 'stored') this.cards?.received(parsed.trigger)
+          return result
         })
         // Acknowledge only after the event and pending work have committed.
         this.client.socketCallBackResponse(frame.headers.messageId, null)
@@ -125,6 +134,7 @@ export class DingTalk {
     if (message.ticketId) this.context.state.set(tickets(conversation, message.ticketId.slice(0, 12)), message.ticketId)
     const text = message.ticketId ? `${label(message.ticketId)} ${message.text}` : message.text
     if (text.length > 4000) throw new Error('DingTalk result exceeds 4000 characters; provide a brief result and a link')
+    if (this.cards) { await this.cards.send(message); return }
     const url = new URL(route.webhook)
     if (url.protocol !== 'https:' || url.hostname !== 'oapi.dingtalk.com') throw new Error('Invalid DingTalk session webhook')
     const token = await this.accessToken()
