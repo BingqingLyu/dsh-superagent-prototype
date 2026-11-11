@@ -115,10 +115,14 @@ export function apply(ctx: Context): void {
     const source = sourceContext(ctx.orchestrator, githubKind)
     const controller = new AbortController()
     // Unhandled rejections terminate the DSH process, so a failure escaping the polling loop is reported as source health instead.
-    const running = watch(source, controller.signal)
-      .catch((error: unknown) => { source.report('github', { state: 'error', detail: String(error) }) })
+    const running = watchGithub(source, controller.signal)
     return async () => { controller.abort(); await running }
   })
+}
+/** Runs the shared polling lifecycle for plugin and headless hosts; the caller aborts and awaits it before shutdown. */
+export async function watchGithub(source: SourceContext, signal: AbortSignal): Promise<void> {
+  try { await watch(source, signal) }
+  catch (error) { if (!signal.aborted) source.report('github', { state: 'error', detail: String(error) }) }
 }
 /** Returns an error health once `failures` consecutive polls fail, or undefined so a single network interruption stays quiet. */
 export function pollFailure(failures: number, threshold: number, error: unknown): Health | undefined {

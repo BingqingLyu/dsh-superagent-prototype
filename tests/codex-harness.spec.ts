@@ -9,6 +9,8 @@ import { Store } from '../src/app/store.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { CodexHarness } from '../src/harness/codex.ts'
 import { DingTalk, dingTalkKind, dingTalkTrigger } from '../src/sources/dingtalk.ts'
+import { githubKind, watchGithub } from '../src/sources/github.ts'
+import { Commands } from '../src/infra/commands.ts'
 import { testMachine, testDeployment } from './fixtures/deployment.ts'
 import type { OutboundMessage } from '../src/core/index.ts'
 
@@ -69,6 +71,28 @@ async function accept() {
   await vi.waitFor(() => expect(submitted.some(item => item.id === `worker-${id}`)).toBe(true))
   return { id, trigger: parsed.trigger, worker: `worker-${id}` }
 }
+it('polls GitHub on the Codex host without model calls for unchanged data and stops on abort', async () => {
+  runtime.sources.register(githubKind)
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings(SettingsSchema.parse({ ...settings,
+    sources: { ...settings.sources, github: { enabled: true, config: {} } } }))
+  // Polling uses a signal-scoped Commands instance, sharing the original command implementation.
+  const calls = vi.spyOn(Commands.prototype, 'run').mockResolvedValue('HTTP/2.0 200 OK\r\n\r\n[]')
+  const before = submitted.length
+  const controller = new AbortController()
+  const polling = watchGithub(runtime.context(githubKind), controller.signal)
+  try {
+    await vi.waitFor(() => expect(calls).toHaveBeenCalled())
+    await runtime.idle()
+    expect(submitted).toHaveLength(before)
+  } finally {
+    controller.abort()
+    await polling
+  }
+  const count = calls.mock.calls.length
+  await watchGithub(runtime.context(githubKind), controller.signal)
+  expect(calls).toHaveBeenCalledTimes(count)
+})
 it('uses original worker reports to relay blockers without a question to the main session, without inventing a direct reply', async () => {
   const { id, worker } = await accept()
   expect(sent).toHaveBeenCalledTimes(1)

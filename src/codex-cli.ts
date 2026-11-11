@@ -13,7 +13,7 @@ import { SettingsSchema } from './policy.ts'
 import type { Machine } from './deployment.ts'
 import { CodexHarness } from './harness/codex.ts'
 import { DingTalk, dingTalkKind } from './sources/dingtalk.ts'
-import { githubKind } from './sources/github.ts'
+import { githubKind, watchGithub } from './sources/github.ts'
 
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`
 const reference = <T>(value: T) => ({ get: () => value })
@@ -62,16 +62,20 @@ async function main(): Promise<void> {
   const harness = new CodexHarness(ctx, { binary: process.env.CODEX_BINARY ?? 'codex', model: process.env.CODEX_MODEL,
     sandbox, port })
   let runtime: Runtime | undefined, robot: DingTalk | undefined
+  const githubController = new AbortController()
+  let githubPolling: Promise<void> | undefined
   let stopping: Promise<void> | undefined
   const stop = () => stopping ??= (async () => {
     robot?.stop()
+    githubController.abort()
+    await githubPolling
     const stopped = runtime?.stop()
     await harness.close()
     await stopped
   })()
   try {
     runtime = new Runtime(ctx, machine, () => { log('restart_required'); void stop() })
-    runtime.lifetime.addEventListener('abort', () => { robot?.stop(); void harness.close() }, { once: true })
+    runtime.lifetime.addEventListener('abort', () => { githubController.abort(); robot?.stop(); void harness.close() }, { once: true })
     runtime.sources.register(githubKind)
     const kind = dingTalkKind(message => robot!.send(message))
     runtime.sources.register(kind)
@@ -81,6 +85,7 @@ async function main(): Promise<void> {
       process.env.DINGTALK_CARD_TEMPLATE_ID, process.env.DINGTALK_ROBOT_NAME)
     await harness.listen()
     await robot.start()
+    githubPolling = watchGithub(runtime.context(githubKind), githubController.signal)
     for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void stop().catch(() => { process.exitCode = 1 }) })
     log('ready')
   } catch (error) { await stop(); throw error }

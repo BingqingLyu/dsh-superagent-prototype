@@ -4,6 +4,8 @@ This entry boots the existing `src/app/runtime.ts`. It uses the original Store, 
 
 Worker reports still go through `orchestrator_report → reportRelay → main Session`. The main Session decides whether to continue, ask for human action, answer a question or deliver a result through `orchestrator_reply`. Ordinary progress stays internal. A blocked/failed report without a question still reaches the main Session.
 
+The entry also starts the existing GitHub polling loop after DingTalk connects and stops it on shutdown. Polling uses the original cursors, deduplication and policy gates; unchanged polls do not invoke the model. The GitHub Source settings control the interval (60 seconds by default) and repository observation switches; starting polling does not enable those switches or add group broadcasts.
+
 Optional DingTalk AI receipt and native reply cards display a waiting receipt before model processing and provide a reply button/input on every feedback card. See `cards/README.md`, publish the supplied [template](../cards/dingtalk-superagent.json), and set `DINGTALK_CARD_TEMPLATE_ID` to enable this mode; text mode remains the default.
 
 ## Install and start
