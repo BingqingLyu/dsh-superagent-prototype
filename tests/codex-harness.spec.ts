@@ -125,6 +125,32 @@ it('normalizes pasted rich text with formatting and routes its task reference th
   runtime.receive(parsed.trigger); await runtime.idle()
   await vi.waitFor(() => expect(submitted.some(value => value.id === `worker-${id}` && value.text.includes('Logged in (keyring)'))).toBe(true))
 })
+it('routes native card quotes without a typed task ID and delivers the followup to the original worker', async () => {
+  const { id, trigger, worker } = await accept()
+  const repliedMsg = { senderId: 'bot', msgId: 'quoted-card', msgType: 'interactiveCard',
+    content: { text: `#${id.slice(0, 12)} NeuG机器人` } }
+  const followup = dingTalkTrigger(event({ msgId: 'quoted-followup', chatbotUserId: 'bot',
+    text: { content: '继续检查', isReplyMsg: true, repliedMsg } }), source)!
+  expect(followup.trigger.text).toBe('继续检查')
+  expect(followup.trigger.threads).toEqual(trigger.threads)
+  expect(followup.trigger.meta).toMatchObject({ referenceResolved: true, referenceSource: 'quote', replyToMessageId: 'quoted-card' })
+  runtime.receive(followup.trigger); await runtime.idle()
+  await vi.waitFor(() => expect(submitted.some(value => value.id === worker && value.text.includes('继续检查'))).toBe(true))
+
+  const cardTree = { cardContent: [{ elementType: 'LIST', children: [
+    { elementType: 'RICHTEXT', children: [{ elementType: 'TEXT', value: `#${id.slice(0, 12)} 检查结果` }] },
+  ] }] }
+  const parseQuote = (quote: unknown, overrides: Record<string, unknown> = {}) => dingTalkTrigger(event({ msgId: 'quote-variant',
+    chatbotUserId: 'bot', text: { content: '继续' },
+    content: JSON.stringify({ isReplyMsg: true, repliedMsg: quote }), ...overrides }), source)!
+  expect(parseQuote({ ...repliedMsg, content: cardTree }).trigger.threads).toEqual(trigger.threads)
+  expect(parseQuote(repliedMsg, { conversationId: 'other-group' }).trigger.threads).not.toEqual(trigger.threads)
+  expect(parseQuote({ ...repliedMsg, senderId: 'another-user' }).trigger.threads).not.toEqual(trigger.threads)
+  expect(parseQuote({ ...repliedMsg, content: { text: '不可解析的卡片摘要' } }).trigger.threads).not.toEqual(trigger.threads)
+  expect(parseQuote(repliedMsg, { isInAtList: false })).toBeUndefined()
+  const explicit = parseQuote(repliedMsg, { text: { content: '#ffffffffffff 另一个任务' } })
+  expect(explicit.trigger.meta).toMatchObject({ ticketReference: 'ffffffffffff', referenceSource: 'text', referenceResolved: false })
+})
 it('preserves rich-text order around images and accepts string-encoded content', () => {
   const content = { richText: [{ text: '前文\n' }, { type: 'picture', downloadCode: 'media-reference' }, { text: '\n后文' }] }
   const parsed = dingTalkTrigger(event({ msgtype: 'richText', text: undefined, content: JSON.stringify(content) }), source)!

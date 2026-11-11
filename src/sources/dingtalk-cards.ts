@@ -11,7 +11,7 @@ const cards = family<Card, [string]>('dingtalk-card:')
 const deliveries = family<string, [string]>('dingtalk-card-delivery:')
 const pendingCards = family<string[], [string]>('dingtalk-card-pending:')
 export const receiptId = (triggerId: string) => key('dingtalk-received', triggerId)
-/** Creates AI receipts/feedback cards with a client-side button that prepares a real group-chat reply. */
+/** Creates AI receipts/feedback cards whose summary carries the task reference for native quoted replies. */
 export class DingTalkCards {
   constructor(private readonly context: SourceContext, private readonly templateId: string,
     private readonly token: () => Promise<string>, private readonly http: typeof fetch = fetch,
@@ -49,13 +49,12 @@ export class DingTalkCards {
     if (message.ticketId) card.ticketId = message.ticketId
     if (!placeholder) card.used = true
     this.context.state.set(cards(id), card)
-    const botId = typeof origin.meta.chatbotUserId === 'string' ? origin.meta.chatbotUserId : ''
-    const replyContent = `@${this.robotName} ${message.ticketId ? `#${message.ticketId.slice(0, 12)} ` : ''}`
-    const data = { title: 'Super agent', status: placeholder ? '处理中' : '完成',
-      markdown: message.text, flowStatus: placeholder ? '1' : '3',
-      replyConversationId: conversationId, replyContent, replyEnabled: String(!!botId && !placeholder),
-      replyHint: placeholder ? '接单后可点击回复，补充内容并发送到群里。' : botId ? '' : '请在群里重新 @ 机器人，以获取回复所需的身份信息。',
-      sys_full_json_obj: JSON.stringify({ replyAtUsers: botId ? { [botId]: this.robotName } : {} }),
+    const taskLabel = message.ticketId ? `#${message.ticketId.slice(0, 12)}` : ''
+    const data = { title: [taskLabel, this.robotName].filter(Boolean).join(' '), status: placeholder ? '处理中' : '完成',
+      markdown: taskLabel ? `${taskLabel}\n\n${message.text}` : message.text, flowStatus: placeholder ? '1' : '3',
+      replyHint: placeholder ? '已收到消息，等待处理。' : taskLabel
+        ? `引用回复此卡片并 @${this.robotName}。若客户端未带回引用摘要，请在正文附上 ${taskLabel}。`
+        : `请在群里 @${this.robotName} 继续沟通。`,
     }
     const body = { outTrackId: id, cardData: { cardParamMap: data } }
     const response = await this.http(`https://api.dingtalk.com/v1.0/card/instances${card.sent ? '' : '/createAndDeliver'}`, {

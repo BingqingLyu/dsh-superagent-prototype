@@ -4,6 +4,7 @@ import { DingTalk, dingTalkTrigger } from '../src/sources/dingtalk.ts'
 import { DingTalkCards, receiptId } from '../src/sources/dingtalk-cards.ts'
 import type { SourceContext } from '../src/sources/host.ts'
 import type { OutboundMessage, Trigger } from '../src/core/index.ts'
+import { readFileSync } from 'node:fs'
 
 let context: SourceContext, origin: Trigger, cards: DingTalkCards
 let http: ReturnType<typeof vi.fn>, notify: ReturnType<typeof vi.fn>
@@ -62,31 +63,40 @@ it('replaces the placeholder with first feedback and gives subsequent feedback i
     openSpaceId: 'dtv1.card//IM_GROUP.group', cardData: { cardParamMap: { flowStatus: '1', status: '处理中' } } })
   await cards.send(message())
   expect(http.mock.calls[1]![1].method).toBe('PUT')
-  expect(requestBody(1)).toMatchObject({ outTrackId: receiptId(origin.id), cardData: { cardParamMap: { flowStatus: '3', status: '完成', markdown: '正在检查' } } })
+  expect(requestBody(1)).toMatchObject({ outTrackId: receiptId(origin.id), cardData: { cardParamMap: { flowStatus: '3', status: '完成', markdown: '#ticket\n\n正在检查' } } })
   await cards.send(message({ id: 'result', kind: 'reply', text: '检查完成' }))
   expect(http.mock.calls[2]![1].method).toBe('POST')
   expect(requestBody(2).outTrackId).not.toBe(receiptId(origin.id))
-  expect(requestBody(2).cardData.cardParamMap).toMatchObject({ flowStatus: '3', status: '完成', markdown: '检查完成' })
+  expect(requestBody(2).cardData.cardParamMap).toMatchObject({ flowStatus: '3', status: '完成', markdown: '#ticket\n\n检查完成' })
 })
-it('prepares a real robot mention and task reference for the group input, with no auto-send or private submission', async () => {
+it('puts the task reference in the native quote summary and body without unsupported client API actions', async () => {
   await receipt()
-  expect(requestBody(0).cardData.cardParamMap.replyEnabled).toBe('false')
+  expect(requestBody(0).cardData.cardParamMap.markdown).toBe('已收到，处理中…')
   await cards.send(message())
   const data = requestBody(1).cardData.cardParamMap
-  expect(data.replyContent).toBe('@Super agent #ticket ')
-  expect(data.replyConversationId).toBe('group')
-  expect(JSON.parse(data.sys_full_json_obj)).toEqual({ replyAtUsers: { 'bot-dingtalk-id': 'Super agent' } })
-  expect(data.replyEnabled).toBe('true')
+  expect(data.title).toBe('#ticket Super agent')
+  expect(data.markdown).toBe('#ticket\n\n正在检查')
+  expect(data.replyHint).toContain('引用回复此卡片')
+  expect(data.replyHint).toContain('#ticket')
   expect(requestBody(0).callbackType).toBeUndefined()
   expect(http.mock.calls.every(call => call[0].startsWith('https://api.dingtalk.com/v1.0/card/instances'))).toBe(true)
 })
-it('disables native reply when the real bot identity is unavailable, rather than using a fake text mention', async () => {
-  origin.meta.chatbotUserId = undefined
-  await cards.send(message())
-  const data = requestBody(0).cardData.cardParamMap
-  expect(data.replyEnabled).toBe('false')
-  expect(JSON.parse(data.sys_full_json_obj)).toEqual({ replyAtUsers: {} })
-  expect(data.replyHint).toContain('重新 @')
+it('exports a complete AI template with sibling states and nonstreaming feedback bound to the transport fields', () => {
+  const read = (name: string) => JSON.parse(readFileSync(new URL(`../cards/${name}`, import.meta.url), 'utf8'))
+  const schema = read('dingtalk-superagent.editor.json')
+  expect(JSON.parse(read('dingtalk-superagent.json').editorData)).toEqual(schema)
+  expect(schema.extension).toMatchObject({ extendType: 'AI', aiStatusList: [1, 2, 3] })
+  const root = schema.schema.componentsTree[0]
+  expect(root.props.summaryContent.variable).toBe('title')
+  expect(root.children.map((node: any) => node.props.status)).toEqual([1, 2, 3])
+  const feedback = root.children[2].children[0].children
+  expect(feedback[0]).toMatchObject({ componentName: 'MarkdownBlock', props: { isStreaming: false, content: { variable: 'markdown' } } })
+  const visit = (node: any) => {
+    expect(node.componentName).not.toBe('SingleButton')
+    if (node !== root) expect(node.children?.some((child: any) => child.componentName === 'AICardStatusContainer') ?? false).toBe(false)
+    node.children?.forEach(visit)
+  }
+  visit(root)
 })
 it('uses a stable card ID on retry and never lets a delayed placeholder overwrite feedback', async () => {
   const pending = await receipt()

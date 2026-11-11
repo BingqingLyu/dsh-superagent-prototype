@@ -1,29 +1,29 @@
-# DingTalk AI receipt and native reply cards
+# DingTalk AI receipts and native quoted replies
 
-This mode uses an **AI card**, with the platform's native pending component. The first received group mention queues a waiting card before any model response. The receipt shows **处理中** (`flowStatus=1`). The first complete feedback updates that card to **完成** (`flowStatus=3`); later feedback remains in separate completed AI cards. The receipt means message received, not task accepted. Completion describes this individual message, not the whole task. The current transport sends complete messages and does not enter the writing state (`flowStatus=2`).
+The transport sends complete messages using ordinary card updates: pending is `flowStatus=1`, finished feedback is `flowStatus=3`. Finished Markdown blocks explicitly use `isStreaming=false`.
 
-The **回复** button prepares `@机器人 #任务编号 ` in the current group's native chat input. The user adds text and presses Send, so the reply is an ordinary user-authored group message visible to everyone. It then enters the existing Stream mention and task-reference path. Clicking the button neither sends a message nor creates a private card submission. There is no robot-authored echo.
+## Import the complete AI template
 
-## Publish the AI template
+1. Grant the existing app `Card.Instance.Write`.
+2. Create a **消息卡片 → AI 卡片** associated with the bot.
+3. Use the editor's top-right tools menu **导入卡片模板** with [dingtalk-superagent.json](dingtalk-superagent.json). The readable source is [dingtalk-superagent.editor.json](dingtalk-superagent.editor.json). The import declares `extension.extendType=AI` and `aiStatusList=[1,2,3]`; it must replace the complete AI template, not insert a normal card inside the existing AI content area.
+4. Open **变量 → Mock** and save the imported mock data so the editor compiles the preview rich text. Before saving/publishing, inspect the outline: one AI root, with three sibling status containers (1, 2, 3), and no nested status containers. Preview pending and completed states. Completed feedback must display the task ID and response. On 2026-11-11, the AliDing web editor displayed both states and the `title` summary binding after this step; this does not validate live quote callbacks.
+5. Set `DINGTALK_CARD_TEMPLATE_ID` to the published template ID and `DINGTALK_ROBOT_NAME` to the actual bot name.
 
-1. Request **互动卡片实例写权限** (`Card.Instance.Write`) for the existing DingTalk app. This version uses complete card updates, so it does not call `Card.Streaming.Write` or claim token-by-token streaming.
-2. Open the advanced card platform, choose **消息卡片 → AI 卡片**, and associate it with the bot's application. Do not use the ordinary `card.dingtalk.com/card-builder?cardType=normal` editor or import into a standard-card template.
-3. In the advanced editor's top-right four-square tools menu, choose **导入卡片模板** and import [dingtalk-superagent.json](dingtalk-superagent.json). [dingtalk-superagent.editor.json](dingtalk-superagent.editor.json) is the readable source. Save to compile the editable schema, then preview the AI processing and completed states before publishing. The import JSON is not a normal-card API body.
-4. The processing state must show the native `AIPending` animation; the completed state must show the response and **回复**. The old card input and **发送回复** controls have been removed.
-5. Set `DINGTALK_CARD_TEMPLATE_ID=<published-AI-template-ID>` and `DINGTALK_ROBOT_NAME=<the bot's actual display name>` in the private env file, rebuild, and restart. Start a new group @ message so the callback supplies the real `chatbotUserId`. Without a bot ID, the reply button is disabled rather than fabricating a plain-text @.
+## Reply and retain the task
 
-## Native input integration and live acceptance
+Use the client's native **回复 / 引用回复** on a feedback card, mention the bot, and send the followup as an ordinary group message. The transport puts `#<12-character task ID>` first in both the card summary (`summaryContent → title`) and Markdown body.
 
-The button uses the DingTalk JSAPI SDK's `biz.chat.sendReplyToInputPanel`, with `cidEnc`, `replyContent`, and `atDingTalkIds`. The bot ID is taken from the received platform message, not inferred from its display name or application ID. A task reference is added only when the actual task ID is known. The initial pending state has no reply button because no task has been accepted yet.
+The receiver reads `isReplyMsg/repliedMsg` in either `text` or `content` (including JSON-encoded content). If the quoted sender matches the bot's actual `chatbotUserId`, it extracts a task reference from the quoted summary/text or `cardContent` TEXT nodes and reuses the existing task-reference resolver. A reference typed in the new message takes precedence. Cross-group, unknown and ambiguous references never route to another task. The new user text remains separate from the quoted text. Source KV retains the quote metadata/body for diagnosis.
 
-**The SDK declares this API for iOS, Android and PC, but that does not establish that this particular AliDing card container has permission to invoke it.** Verify in the real client after publishing; a browser preview cannot validate the native composer. If the client rejects the API, investigate its documented container permissions before enabling this interaction. Do not silently switch back to private submissions or robot echoes.
+**Live acceptance is still required for this AliDing client.** Public callback examples establish quoted-message fields, but do not guarantee this client's AI-card quote includes our summary or task ID, or automatically mentions the bot. If the client sends only an opaque message ID or omits the task-bearing summary, automatic task recovery remains unavailable; add the displayed task ID to the new message. Do not infer the most recent task in a group.
 
-Live acceptance: click **回复** on a feedback card and verify (1) the correct group input is focused, (2) the bot is a real mention, (3) the correct task prefix is present, (4) no message is sent until the user presses Send, and (5) everyone sees the user-authored message and the original task receives it. Test both desktop and mobile, including a draft already in the input. No claim of this behavior is established by local transport tests alone.
+The earlier custom **回复** button was invalid: the current AliDing editor has no JSAPI action in either its button actions or event chain. It normalized the unsupported `callAPI` action to an empty URL. The corrected template removes that control instead of claiming `biz.chat.sendReplyToInputPanel` works in this container. There is no private card submission or robot-authored echo.
 
-## Transport
+Verify on the real client: quote a card with two tasks in the same group, send a followup mentioning the bot without typing an ID, and inspect the received trigger for `referenceSource=quote`, `referenceResolved=true`, and the correct task thread/worker. Test desktop and mobile. If unresolved, inspect the persisted quote (not credentials or session webhooks) before extending the mapping.
 
-- Creation uses `POST /v1.0/card/instances/createAndDeliver`; updates use `PUT /v1.0/card/instances`. `flowStatus=1` shows processing and `flowStatus=3` shows the complete feedback. This is the per-message display state, not the task lifecycle state.
-- Source KV persists pending receipt and delivery mappings; the original Outbox owns delivery/retries. Native replies arrive through the existing group-message callback, not `TOPIC_CARD`. No public HTTP endpoint is required.
-- An ambiguous create response after a network failure may require operator reconciliation; this transport does not claim exactly-once external delivery. Misconfigured card delivery stays in normal Outbox retry/error handling. Without a configured template the original text mode remains active.
+## Delivery
 
-References: [official AI card examples](https://github.com/open-dingtalk/dingtalk-card-examples), [official AI state implementation](https://github.com/open-dingtalk/dingtalk-stream-sdk-python/blob/main/dingtalk_stream/card_replier.py), [DingTalk JSAPI SDK](https://www.npmjs.com/package/dingtalk-jsapi) (`lib/common/api/biz/chat/sendReplyToInputPanel.d.ts`).
+Creation uses `POST /v1.0/card/instances/createAndDeliver`; updates use `PUT /v1.0/card/instances`. Source KV and the original Outbox retain pending receipt, retry and delivery ownership. No card-interaction callback or public HTTP endpoint is added. Without a configured template, the existing text transport remains active.
+
+References: [official card examples](https://github.com/open-dingtalk/dingtalk-card-examples), [official AI status implementation](https://github.com/open-dingtalk/dingtalk-stream-sdk-python/blob/main/dingtalk_stream/card_replier.py), [quoted callback report in the official Stream SDK repository](https://github.com/open-dingtalk/dingtalk-stream-sdk-go/issues/22), [captured interactiveCard quote body](https://github.com/soimy/openclaw-channel-dingtalk/issues/598).

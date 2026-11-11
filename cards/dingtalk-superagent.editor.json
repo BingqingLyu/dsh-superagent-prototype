@@ -51,15 +51,6 @@
       {
         "package": "@ali/dxComponent",
         "version": "1.0.0",
-        "exportName": "SingleButton",
-        "main": "./src/index.tsx",
-        "destructuring": false,
-        "subName": "",
-        "componentName": "SingleButton"
-      },
-      {
-        "package": "@ali/dxComponent",
-        "version": "1.0.0",
         "exportName": "Markdown",
         "main": "./src/index.tsx",
         "destructuring": false,
@@ -88,6 +79,11 @@
             "type": "variableValue",
             "variableType": "global",
             "variable": "flowStatus"
+          },
+          "summaryContent": {
+            "type": "variableValue",
+            "variableType": "global",
+            "variable": "title"
           }
         },
         "hidden": false,
@@ -164,76 +160,11 @@
                         "variableType": "global",
                         "varType": "markdown"
                       },
-                      "mdVer": 0
+                      "mdVer": 0,
+                      "isStreaming": false
                     },
                     "hidden": false,
                     "title": "MarkdownBlock",
-                    "isLocked": false,
-                    "condition": true,
-                    "conditionGroup": ""
-                  },
-                  {
-                    "componentName": "SingleButton",
-                    "id": "writing_native_reply",
-                    "props": {
-                      "text": {
-                        "type": "dynamicString",
-                        "content": "回复",
-                        "i18n": false
-                      },
-                      "status": {
-                        "type": "dynamicSelect",
-                        "valueType": "variable",
-                        "variable": "replyButtonStatus",
-                        "variableType": "global",
-                        "value": "normal"
-                      },
-                      "color": {
-                        "type": "dynamicSelect",
-                        "valueType": "fixed",
-                        "value": "blue"
-                      },
-                      "actionType": "callAPI",
-                      "callAPIName": {
-                        "type": "dynamicString",
-                        "content": "biz.chat.sendReplyToInputPanel",
-                        "i18n": false
-                      },
-                      "callAPIParams": [
-                        {
-                          "type": "variable",
-                          "variable": "replyConversationId",
-                          "variableType": "global",
-                          "name": "cidEnc",
-                          "id": "cidEnc",
-                          "value": ""
-                        },
-                        {
-                          "type": "variable",
-                          "variable": "replyContent",
-                          "variableType": "global",
-                          "name": "replyContent",
-                          "id": "replyContent",
-                          "value": ""
-                        },
-                        {
-                          "type": "variable",
-                          "variable": "replyAtUsers",
-                          "variableType": "global",
-                          "name": "atDingTalkIds",
-                          "id": "atDingTalkIds",
-                          "value": ""
-                        }
-                      ],
-                      "isCallAPIParamsVariable": false,
-                      "failureToast": {
-                        "type": "dynamicString",
-                        "content": "无法唤起输入框，请在群中手动 @ 机器人并填写任务编号。",
-                        "i18n": false
-                      }
-                    },
-                    "hidden": false,
-                    "title": "SingleButton",
                     "isLocked": false,
                     "condition": true,
                     "conditionGroup": ""
@@ -294,76 +225,11 @@
                         "variableType": "global",
                         "varType": "markdown"
                       },
-                      "mdVer": 0
+                      "mdVer": 0,
+                      "isStreaming": false
                     },
                     "hidden": false,
                     "title": "MarkdownBlock",
-                    "isLocked": false,
-                    "condition": true,
-                    "conditionGroup": ""
-                  },
-                  {
-                    "componentName": "SingleButton",
-                    "id": "native_reply",
-                    "props": {
-                      "text": {
-                        "type": "dynamicString",
-                        "content": "回复",
-                        "i18n": false
-                      },
-                      "status": {
-                        "type": "dynamicSelect",
-                        "valueType": "variable",
-                        "variable": "replyButtonStatus",
-                        "variableType": "global",
-                        "value": "normal"
-                      },
-                      "color": {
-                        "type": "dynamicSelect",
-                        "valueType": "fixed",
-                        "value": "blue"
-                      },
-                      "actionType": "callAPI",
-                      "callAPIName": {
-                        "type": "dynamicString",
-                        "content": "biz.chat.sendReplyToInputPanel",
-                        "i18n": false
-                      },
-                      "callAPIParams": [
-                        {
-                          "type": "variable",
-                          "variable": "replyConversationId",
-                          "variableType": "global",
-                          "name": "cidEnc",
-                          "id": "cidEnc",
-                          "value": ""
-                        },
-                        {
-                          "type": "variable",
-                          "variable": "replyContent",
-                          "variableType": "global",
-                          "name": "replyContent",
-                          "id": "replyContent",
-                          "value": ""
-                        },
-                        {
-                          "type": "variable",
-                          "variable": "replyAtUsers",
-                          "variableType": "global",
-                          "name": "atDingTalkIds",
-                          "id": "atDingTalkIds",
-                          "value": ""
-                        }
-                      ],
-                      "isCallAPIParamsVariable": false,
-                      "failureToast": {
-                        "type": "dynamicString",
-                        "content": "无法唤起输入框，请在群中手动 @ 机器人并填写任务编号。",
-                        "i18n": false
-                      }
-                    },
-                    "hidden": false,
-                    "title": "SingleButton",
                     "isLocked": false,
                     "condition": true,
                     "conditionGroup": ""
@@ -397,15 +263,11 @@
   },
   "mockData": {
     "cardData": {
-      "flowStatus": "1",
-      "title": "Super agent",
-      "status": "处理中",
-      "markdown": "已收到消息，正在处理。",
-      "replyEnabled": true,
-      "replyContent": "@Super agent #5e0e259f5059 ",
-      "replyConversationId": "",
-      "replyAtUsers": {},
-      "replyHint": ""
+      "flowStatus": "3",
+      "title": "#5e0e259f5059 NeuG机器人",
+      "status": "完成",
+      "markdown": "#5e0e259f5059\n\n### 检查结果\n已完成 PR 检查，暂未发现问题。",
+      "replyHint": "引用回复此卡片并 @NeuG机器人。若客户端未带回引用摘要，请在正文附上 #5e0e259f5059。"
     },
     "cardPrivateData": {},
     "localData": {},
@@ -448,38 +310,6 @@
       "description": "markdown"
     },
     {
-      "name": "replyContent",
-      "id": "replyContent",
-      "type": "string",
-      "private": false,
-      "editorVarType": "variables",
-      "description": "replyContent"
-    },
-    {
-      "name": "replyConversationId",
-      "id": "replyConversationId",
-      "type": "string",
-      "private": false,
-      "editorVarType": "variables",
-      "description": "replyConversationId"
-    },
-    {
-      "name": "replyAtUsers",
-      "id": "replyAtUsers",
-      "type": "object",
-      "private": false,
-      "editorVarType": "variables",
-      "description": "replyAtUsers"
-    },
-    {
-      "name": "replyEnabled",
-      "id": "replyEnabled",
-      "type": "boolean",
-      "private": false,
-      "editorVarType": "variables",
-      "description": "replyEnabled"
-    },
-    {
       "name": "replyHint",
       "id": "replyHint",
       "type": "markdown",
@@ -489,28 +319,23 @@
     }
   ],
   "formList": [],
-  "expList": [
-    {
-      "id": "replyButtonStatus",
-      "name": "replyButtonStatus",
-      "type": "string",
-      "private": false,
-      "editorVarType": "expList",
-      "description": "缺少真实机器人身份时禁用回复",
-      "expContent": "replyEnabled ? 'normal' : 'disabled'"
-    }
-  ],
+  "expList": [],
   "localList": [],
   "hsfList": [],
   "lwpList": [],
   "extension": {
-    "extendType": "NORMAL",
+    "extendType": "AI",
     "fileTypeList": [
       {
         "fileName": "event_chain",
         "fileSource": "{}",
         "fileType": "json"
       }
+    ],
+    "aiStatusList": [
+      1,
+      2,
+      3
     ]
   }
 }

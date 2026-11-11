@@ -44,6 +44,35 @@ function contentText(value: unknown): string {
   return ''
 }
 
+const QuotedMessage = z.object({ msgId: z.string().optional(), senderId: z.string().optional(),
+  msgType: z.string().optional(), content: z.unknown().optional() })
+function quotedMessage(head: Record<string, unknown>) {
+  for (let container of [head.text, head.content]) {
+    if (typeof container === 'string') {
+      try { container = JSON.parse(container) } catch { continue }
+    }
+    if (!container || typeof container !== 'object') continue
+    const body = container as Record<string, unknown>
+    if (body.isReplyMsg !== true) continue
+    const quote = QuotedMessage.safeParse(body.repliedMsg)
+    if (quote.success) return quote.data
+  }
+}
+/** Only card TEXT nodes are readable quote content; opaque/encrypted content is never guessed. */
+function quotedText(value: unknown, depth = 0): string {
+  if (depth > 8) return ''
+  if (typeof value === 'string') {
+    try { return quotedText(JSON.parse(value), depth + 1) } catch { return value }
+  }
+  if (Array.isArray(value)) return value.map(item => quotedText(item, depth + 1)).join('\n')
+  if (!value || typeof value !== 'object') return ''
+  const body = value as Record<string, unknown>
+  if (body.elementType === 'TEXT' && typeof body.value === 'string') return body.value
+  if (Array.isArray(body.cardContent)) return quotedText(body.cardContent, depth + 1)
+  if (Array.isArray(body.children)) return quotedText(body.children, depth + 1)
+  return contentText(value)
+}
+
 export function dingTalkTrigger(raw: unknown, context: SourceContext): { trigger: Trigger; route: Route; body?: { messageType: string; content: unknown } } | undefined {
   // The agreed receiving scope is group mentions; content type is not an additional filter.
   if (!raw || typeof raw !== 'object') return
@@ -54,7 +83,10 @@ export function dingTalkTrigger(raw: unknown, context: SourceContext): { trigger
   const text = [message.text?.content, contentText(message.content)].filter(value => value?.trim()).join('\n').trim()
     || `[钉钉 ${message.msgtype} 消息，未提供可解析文本；附件内容尚未下载或解析]`
   const id = key('dingtalk', message.robotCode, message.conversationId, message.msgId)
-  const reference = ticketReference(text)
+  const quote = quotedMessage(head)
+  const replyToBot = !!quote?.senderId && !!message.chatbotUserId && quote.senderId === message.chatbotUserId
+  const directReference = ticketReference(text)
+  const reference = directReference ?? (replyToBot ? ticketReference(quotedText(quote?.content)) : undefined)
   const saved = reference ? context.state.get(tickets(message.conversationId, reference)) : undefined
   const matches = reference ? (saved ? [context.tickets.get(saved)].filter(ticket => !!ticket)
     : context.tickets.open().filter(ticket => ticket.id.startsWith(reference)))
@@ -69,9 +101,12 @@ export function dingTalkTrigger(raw: unknown, context: SourceContext): { trigger
       channel: { source: 'dingtalk', thread: `dingtalk:${conversation}`, address: { conversationId: conversation, triggerId: id } },
       meta: { conversationId: conversation, conversationType: '2', senderCorpId: message.senderCorpId, robotCode: message.robotCode,
         messageId: message.msgId, messageType: message.msgtype, chatbotUserId: message.chatbotUserId,
+        ...(quote ? { replyToMessageId: quote.msgId, replyToMessageType: quote.msgType, replyToBot } : {}),
+        ...(reference ? { referenceSource: directReference ? 'text' : 'quote' } : {}),
         ...(reference ? { ticketReference: reference, referenceResolved: matches.length === 1 } : {}) } },
     route: { webhook: message.sessionWebhook, expires: message.sessionWebhookExpiredTime, robotCode: message.robotCode, conversationId: conversation },
-    ...(message.content !== undefined ? { body: { messageType: message.msgtype, content: message.content } } : {}),
+    ...(message.content !== undefined || quote ? { body: { messageType: message.msgtype,
+      content: quote ? { content: message.content, quote } : message.content } } : {}),
   }
 }
 
