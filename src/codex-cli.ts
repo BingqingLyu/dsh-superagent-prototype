@@ -35,7 +35,10 @@ async function main(): Promise<void> {
   const port = z.coerce.number().int().min(1).max(65535).parse(process.env.SUPERAGENT_PORT ?? 3082)
   const githubAuth = z.enum(['user', 'app']).parse(process.env.SUPERAGENT_GITHUB_AUTH ?? 'user')
   const githubApp = githubAuth === 'app' ? GithubAppSchema.parse({
-    appId: process.env.SUPERAGENT_GITHUB_APP_ID, installationId: process.env.SUPERAGENT_GITHUB_INSTALLATION_ID,
+    appId: process.env.SUPERAGENT_GITHUB_APP_ID,
+    ...(process.env.SUPERAGENT_GITHUB_INSTALLATIONS
+      ? { installations: JSON.parse(process.env.SUPERAGENT_GITHUB_INSTALLATIONS) }
+      : { installationId: process.env.SUPERAGENT_GITHUB_INSTALLATION_ID }),
     privateKeyPath: process.env.SUPERAGENT_GITHUB_PRIVATE_KEY_PATH,
   }) : undefined
   mkdirSync(stateDir, { recursive: true, mode: 0o700 })

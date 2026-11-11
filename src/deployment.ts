@@ -8,7 +8,7 @@ import { z } from 'zod'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { runAsWorker, sameDirectory, withoutDirectory, workerBin } from './infra/environment.ts'
 import { SetupError } from './setup.ts'
-import { GithubAppSchema, appJwt, appRequest, installationToken, writeAppCli } from './infra/github-app.ts'
+import { GithubAppSchema, appInstallations, appJwt, appRequest, installationToken, repositoryInstallation, writeAppCli } from './infra/github-app.ts'
 
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const absolute = (description: string) => s.string().pattern(/^\//).description(`${description} Absolute path.`)
@@ -54,7 +54,7 @@ export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { githu
 
 export interface Deployment extends Machine {
   repository: string
-  github: { cli: string; login: string; noreply: string; auth?: 'app' }
+  github: { cli: string; login: string; noreply: string; auth?: 'app'; repositories?: string[] }
   feishu?: FeishuBot
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
@@ -99,20 +99,28 @@ export async function resolveDeployment(machine: Machine, github: unknown, probe
       const app = accounts.app
       const jwt = await appJwt(app)
       const identity = z.object({ id: z.number(), slug: z.string().regex(/^[A-Za-z0-9-]+$/) }).parse(await appRequest('/app', jwt))
-      const installation = z.object({ app_id: z.number(), account: z.object({ login: z.string() }) })
-        .parse(await appRequest(`/app/installations/${app.installationId}`, jwt))
-      if (String(identity.id) !== app.appId || installation.app_id !== identity.id
-        || installation.account.login.toLowerCase() !== remote.split('/')[0]!.toLowerCase()) throw new Error('Installation mismatch')
       const config = { app, repository: remote, stateDir, cli }
-      const credential = await installationToken(config)
-      if (['contents', 'pull_requests', 'issues'].some(permission => credential.permissions[permission] !== 'write')) {
-        throw new Error('App requires Contents, Pull requests and Issues write permissions')
+      repositoryInstallation(config) // The watched upstream must have an explicit route too.
+      const repositories: string[] = []
+      for (const route of appInstallations(config)) {
+        const installation = z.object({ app_id: z.number(), account: z.object({ login: z.string() }) })
+          .parse(await appRequest(`/app/installations/${route.installationId}`, jwt))
+        if (String(identity.id) !== app.appId || installation.app_id !== identity.id
+          || installation.account.login.toLowerCase() !== route.repository.split('/')[0]!.toLowerCase()) throw new Error('Installation mismatch')
+        const access = await installationToken({ ...config, repository: route.repository })
+        const upstream = route.repository.toLowerCase() === remote.toLowerCase()
+        const required = upstream ? ['pull_requests', 'issues'] : ['contents']
+        if (required.some(permission => access.permissions[permission] !== 'write')) throw new Error('Missing App repository write permissions')
+        if (upstream && !['read', 'write'].includes(access.permissions.contents ?? '')) throw new Error('Missing App Contents read permission')
+        repositories.push(z.object({ full_name: z.string() }).parse(await appRequest(`/repos/${route.repository}`, access.token)).full_name)
       }
-      const repository = z.object({ full_name: z.string() }).parse(await appRequest(`/repos/${remote}`, credential.token)).full_name
+      const credential = await installationToken(config)
+      const repository = repositories[appInstallations(config).findIndex(route => route.repository.toLowerCase() === remote.toLowerCase())]!
       const login = `${identity.slug}[bot]`
       const bot = z.object({ id: z.number().int().positive(), login: z.literal(login) })
         .parse(await appRequest(`/users/${encodeURIComponent(login)}`, credential.token))
-      return { ...machine, repository, github: { cli: await writeAppCli(config), auth: 'app', login,
+      const routedApp = app.installations ? { ...app, installations: app.installations.map((route, index) => ({ ...route, repository: repositories[index]! })) } : app
+      return { ...machine, repository, github: { cli: await writeAppCli({ ...config, repository, app: routedApp }), auth: 'app', repositories, login,
         noreply: `${bot.id}+${login}@users.noreply.github.com` } }
     } catch { throw new SetupError('githubAppFailed') }
   }

@@ -49,9 +49,9 @@ These steps start a fresh installation. Runtime state, credentials, ticket workt
 
 ### GitHub App identity
 
-Install your GitHub App on the target repository. Grant repository permissions Contents, Pull requests and Issues as read/write, and Checks and Actions as read for CI inspection. Metadata read access is implicit. Download an App private key onto the service machine; keep the PEM file outside the checkout and restrict its file permissions to the service user.
+Install the same GitHub App on the upstream and your fork. The watched upstream needs Contents read and Pull requests/Issues write permissions; a fork used for code pushes needs Contents write. Grant Checks and Actions read permissions for CI inspection. Metadata read access is implicit. Download an App private key onto the service machine; keep the PEM file outside the checkout and restrict its file permissions to the service user.
 
-For a new state directory, set `SUPERAGENT_GITHUB_AUTH=app`, `SUPERAGENT_GITHUB_APP_ID`, `SUPERAGENT_GITHUB_INSTALLATION_ID` and `SUPERAGENT_GITHUB_PRIVATE_KEY_PATH` before the first start. `SUPERAGENT_GITHUB_CLI` still names the real `gh` executable. This installation uses its own `neug-agent[bot]` identity rather than the host's personal login.
+For a new state directory, set `SUPERAGENT_GITHUB_AUTH=app`, `SUPERAGENT_GITHUB_APP_ID`, `SUPERAGENT_GITHUB_PRIVATE_KEY_PATH` and `SUPERAGENT_GITHUB_INSTALLATIONS` before the first start. The last variable is a JSON array of repository-to-installation mappings as shown below. `SUPERAGENT_GITHUB_CLI` still names the real `gh` executable. Both installations use the same `neug-agent[bot]` identity, with different repository access tokens. The old `SUPERAGENT_GITHUB_INSTALLATION_ID` remains supported for a single watched repository; use either the single ID or mappings.
 
 For an existing installation, environment variables do not replace saved Source settings. Read `GET /orchestrator/api/settings`, keep the current GitHub block's configuration and revision, then save it with `PUT /orchestrator/api/settings/source:github` and the `x-orchestrator-request: 1` header. Add this object to the existing `value.config`:
 
@@ -59,7 +59,10 @@ For an existing installation, environment variables do not replace saved Source 
 {
   "app": {
     "appId": "123456",
-    "installationId": "12345678",
+    "installations": [
+      { "repository": "alibaba/neug", "installationId": "12345678" },
+      { "repository": "your-login/neug", "installationId": "87654321" }
+    ],
     "privateKeyPath": "/absolute/path/to/neug-agent.pem"
   }
 }
@@ -67,7 +70,9 @@ For an existing installation, environment variables do not replace saved Source 
 
 Keep `repository`, `cli` and observation settings in that configuration. The `cli` must remain the real GitHub CLI, not a generated `stateDir/github-app/.../gh-app` wrapper. Saving validates the App installation and requests a service restart. To return to personal authentication, remove `app` and save again.
 
-The service caches repository-scoped installation tokens in its private state directory and refreshes them five minutes before expiry. Service commands, worker `gh` commands and Git's credential helper all use the same App wrapper. There is no personal-login fallback. Git commits still follow the existing explicit author policy; authenticating pushes as an App does not rewrite commit authors.
+The service validates every configured repository and installation. Tokens are cached separately per repository and installation and refreshed five minutes before expiry. Each invocation selects credentials using the REST repository path, `--repo`/`-R`, a repository URL, or an explicit GraphQL repository; otherwise it uses `GH_REPO`, the checkout's `origin`, then the watched repository when no origin exists. Use explicit targets for cross-fork work, for example `gh pr create --repo alibaba/neug --head your-login:branch` or `gh pr comment 123 --repo alibaba/neug`. One GraphQL request cannot span multiple repository targets; issue separate requests. Unknown repositories fail rather than falling back to another installation or personal login.
+
+Git's credential helper uses the remote repository path (`credential.useHttpPath=true`) to choose the fork or upstream token. Push to your fork remote and create/comment on PRs against the upstream explicitly. The worker receives the authorized repository list as `DSH_SUPERAGENT_GITHUB_REPOSITORIES`; it still watches only the configured Source repository. An App-authored PR whose head is in an authorized fork can bind to the task when its branch matches the task name. Git commits retain the existing explicit author policy; authenticating pushes as an App does not rewrite commit authors.
 
 App installations have no personal notification inbox. App mode polls repository Issue/PR and comment streams instead to discover mentions, and reads reviews on changed PRs and subscribed threads. Existing observation switches, policy gates, cursors and deduplication still apply; enabling App authentication does not enable proactive work or group broadcasts. Polling uses the original initial-baseline behavior rather than replaying repository history.
 

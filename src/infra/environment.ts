@@ -109,6 +109,7 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
     '[user]', '\tuseConfigOnly = true',
     '[credential]', '\thelper =',
     '[credential "https://github.com"]', `\thelper = ${gitQuote(credentialHelper(github.cli))}`,
+    ...(github.auth === 'app' ? ['\tuseHttpPath = true'] : []),
     '[url "https://github.com/"]', '\tinsteadOf = git@github.com:', '\tinsteadOf = ssh://git@github.com/',
     // Include Git LFS filters because the operator's global gitconfig (which usually holds them) is ignored.
     '[filter "lfs"]', '\tclean = git-lfs clean -- %f', '\tsmudge = git-lfs smudge -- %f', '\tprocess = git-lfs filter-process', '\trequired = true',
