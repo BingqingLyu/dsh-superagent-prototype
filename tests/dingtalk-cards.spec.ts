@@ -57,17 +57,52 @@ it('queues a durable AI waiting card immediately on intake without registering a
     expect(notify).toHaveBeenCalledOnce()
   } finally { register.mockRestore(); ack.mockRestore() }
 })
-it('replaces the placeholder with first feedback and gives subsequent feedback independent reply cards', async () => {
+it('shows worker acceptance as writing and appends its result to the same card', async () => {
   await receipt()
   expect(requestBody(0)).toMatchObject({ cardTemplateId: 'template.schema',
     openSpaceId: 'dtv1.card//IM_GROUP.group', cardData: { cardParamMap: { flowStatus: '1', status: '处理中' } } })
   await cards.send(message())
   expect(http.mock.calls[1]![1].method).toBe('PUT')
-  expect(requestBody(1)).toMatchObject({ outTrackId: receiptId(origin.id), cardData: { cardParamMap: { flowStatus: '3', status: '完成', markdown: '#ticket\n\n正在检查' } } })
+  expect(requestBody(1)).toMatchObject({ outTrackId: receiptId(origin.id), cardData: { cardParamMap: { flowStatus: '2', status: '输出中', markdown: '#ticket\n\n正在检查' } } })
   await cards.send(message({ id: 'result', kind: 'reply', text: '检查完成' }))
-  expect(http.mock.calls[2]![1].method).toBe('POST')
-  expect(requestBody(2).outTrackId).not.toBe(receiptId(origin.id))
-  expect(requestBody(2).cardData.cardParamMap).toMatchObject({ flowStatus: '3', status: '完成', markdown: '#ticket\n\n检查完成' })
+  expect(http.mock.calls[2]![1].method).toBe('PUT')
+  expect(requestBody(2).outTrackId).toBe(receiptId(origin.id))
+  expect(requestBody(2).cardData.cardParamMap).toMatchObject({ flowStatus: '3', status: '完成', markdown: '#ticket\n\n正在检查\n\n---\n\n检查完成' })
+})
+it('completes a direct answer without creating a worker or leaving the card writing', async () => {
+  await receipt()
+  await cards.send(message({ id: 'answer', kind: 'reply', ticketId: undefined, text: '直接回答' }))
+  expect(requestBody(1)).toMatchObject({ outTrackId: receiptId(origin.id), cardData: { cardParamMap: {
+    flowStatus: '3', status: '完成', markdown: '直接回答',
+  } } })
+})
+it('retains appended feedback across transport restarts and retries without duplicates or status regression', async () => {
+  await receipt()
+  await cards.send(message())
+  cards = new DingTalkCards(context, 'template.schema', async () => 'access-token', http as typeof fetch)
+  http.mockResolvedValueOnce({ ok: false, status: 503 })
+  const result = message({ id: 'result', kind: 'reply', text: '检查完成' })
+  await expect(cards.send(result)).rejects.toThrow('HTTP 503')
+  await cards.send(result)
+  await cards.send(message())
+  for (const call of [2, 3, 4]) {
+    expect(requestBody(call).outTrackId).toBe(receiptId(origin.id))
+    expect(requestBody(call).cardData.cardParamMap).toMatchObject({ flowStatus: '3', markdown: '#ticket\n\n正在检查\n\n---\n\n检查完成' })
+  }
+})
+it('uses a new card for a quoted followup and keeps unrelated tickets separate', async () => {
+  await receipt()
+  await cards.send(message())
+  const followup = { ...origin, id: 'followup', channel: { ...origin.channel!, address: { ...origin.channel!.address, triggerId: 'followup' } } }
+  context.receive(followup)
+  cards.received(followup)
+  const pending = notify.mock.calls.at(-1)![0] as OutboundMessage
+  await cards.send(pending)
+  await cards.send(message({ id: 'followup-result', kind: 'reply', channel: followup.channel, text: '追问结果' }))
+  expect(requestBody(3)).toMatchObject({ outTrackId: receiptId('followup'), cardData: { cardParamMap: { markdown: '#ticket\n\n追问结果' } } })
+  await cards.send(message({ id: 'other-ticket', kind: 'reply', ticketId: 'other', text: '其他任务' }))
+  expect(requestBody(4).outTrackId).not.toBe(receiptId('followup'))
+  expect(requestBody(4).outTrackId).not.toBe(receiptId(origin.id))
 })
 it('puts the task reference in the native quote summary and body without unsupported client API actions', async () => {
   await receipt()
@@ -76,8 +111,7 @@ it('puts the task reference in the native quote summary and body without unsuppo
   const data = requestBody(1).cardData.cardParamMap
   expect(data.title).toBe('#ticket Super agent')
   expect(data.markdown).toBe('#ticket\n\n正在检查')
-  expect(data.replyHint).toContain('引用回复此卡片')
-  expect(data.replyHint).toContain('#ticket')
+  expect(data.replyHint).toBe('---\n\n引用此卡片以回复消息。')
   expect(requestBody(0).callbackType).toBeUndefined()
   expect(http.mock.calls.every(call => call[0].startsWith('https://api.dingtalk.com/v1.0/card/instances'))).toBe(true)
 })
@@ -91,6 +125,7 @@ it('exports a complete AI template with sibling states and nonstreaming feedback
   expect(root.children.map((node: any) => node.props.status)).toEqual([1, 2, 3])
   const feedback = root.children[2].children[0].children
   expect(feedback[0]).toMatchObject({ componentName: 'MarkdownBlock', props: { isStreaming: false, content: { variable: 'markdown' } } })
+  expect(root.children[1].children[0].children[0]).toMatchObject({ componentName: 'MarkdownBlock', props: { isStreaming: false, content: { variable: 'markdown' } } })
   const visit = (node: any) => {
     expect(node.componentName).not.toBe('SingleButton')
     if (node !== root) expect(node.children?.some((child: any) => child.componentName === 'AICardStatusContainer') ?? false).toBe(false)

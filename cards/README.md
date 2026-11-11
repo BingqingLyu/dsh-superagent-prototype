@@ -1,6 +1,10 @@
 # DingTalk AI receipts and native quoted replies
 
-The transport sends complete messages using ordinary card updates: pending is `flowStatus=1`, finished feedback is `flowStatus=3`. Finished Markdown blocks explicitly use `isStreaming=false`.
+The transport sends complete messages using ordinary card updates: pending is `flowStatus=1`; acceptance of a worker task changes the same card to **输出中** (`flowStatus=2`). Subsequent replies append below the acceptance in that card, separated by a divider, and change it to **完成** (`flowStatus=3`). A direct answer without a worker goes straight from pending to completed. Both writing and finished Markdown blocks explicitly use `isStreaming=false`: this is full-message updating, not token streaming.
+
+The active card is scoped to the ticket and conversation. A new user followup receives a new pending card, which becomes the active card when feedback for that turn is sent. Message IDs and appended text are persisted in Source KV, so retries and transport restarts do not duplicate feedback. Worker reports still go through the original main-agent reply tools and Outbox; the transport does not publish worker reports on its own. The writing state describes a request waiting for its result, not a continuously running main agent.
+
+While writing, a divider below the existing response is followed by the native `AIPending` spinner labeled **输出中…**. Completed feedback replaces this waiting area with the appended result and has no spinner. Both states end with a divided footer: **引用此卡片以回复消息。** This layout requires importing and publishing the updated template as well as restarting the rebuilt service.
 
 ## Import the complete AI template
 

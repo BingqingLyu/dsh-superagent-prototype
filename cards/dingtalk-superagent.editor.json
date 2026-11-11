@@ -171,6 +171,40 @@
                   },
                   {
                     "componentName": "Markdown",
+                    "id": "writing_pending_divider",
+                    "props": {
+                      "content": {
+                        "type": "dynamicMarkdown",
+                        "valueType": "fixed",
+                        "value": "---"
+                      }
+                    },
+                    "hidden": false,
+                    "title": "Markdown",
+                    "isLocked": false,
+                    "condition": true,
+                    "conditionGroup": ""
+                  },
+                  {
+                    "componentName": "AIPending",
+                    "id": "writing_pending",
+                    "props": {
+                      "pendingTip": {
+                        "type": "dynamicString",
+                        "content": "输出中…",
+                        "i18n": false
+                      },
+                      "style": "embed",
+                      "hideIcon": false
+                    },
+                    "hidden": false,
+                    "title": "AIPending",
+                    "isLocked": false,
+                    "condition": true,
+                    "conditionGroup": ""
+                  },
+                  {
+                    "componentName": "Markdown",
                     "id": "writing_reply_hint",
                     "props": {
                       "content": {
@@ -267,7 +301,7 @@
       "title": "#5e0e259f5059 NeuG机器人",
       "status": "完成",
       "markdown": "#5e0e259f5059\n\n### 检查结果\n已完成 PR 检查，暂未发现问题。",
-      "replyHint": "引用回复此卡片并 @NeuG机器人。若客户端未带回引用摘要，请在正文附上 #5e0e259f5059。"
+      "replyHint": "---\n\n引用此卡片以回复消息。"
     },
     "cardPrivateData": {},
     "localData": {},

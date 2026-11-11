@@ -6,10 +6,12 @@ import type { SourceContext } from './host.ts'
 interface Card {
   triggerId: string; conversationId: string; templateId: string; used: boolean; sent: boolean
   ticketId?: string
+  messages?: { id: string; text: string; flowStatus: '2' | '3' }[]
 }
 const cards = family<Card, [string]>('dingtalk-card:')
 const deliveries = family<string, [string]>('dingtalk-card-delivery:')
 const pendingCards = family<string[], [string]>('dingtalk-card-pending:')
+const activeCards = family<string, [string]>('dingtalk-card-active:')
 export const receiptId = (triggerId: string) => key('dingtalk-received', triggerId)
 /** Creates AI receipts/feedback cards whose summary carries the task reference for native quoted replies. */
 export class DingTalkCards {
@@ -39,7 +41,9 @@ export class DingTalkCards {
     const pending = this.context.state.get(pendingKey) ?? []
     const mapped = this.context.state.get(deliveries(message.id))
     const waiting = !placeholder && !mapped ? pending[0] : undefined
-    const id = mapped ?? (placeholder ? receipt : waiting ? receiptId(waiting) : key('dingtalk-feedback', message.id))
+    const activeKey = message.ticketId ? activeCards(key(conversationId, message.ticketId)) : undefined
+    const active = activeKey ? this.context.state.get(activeKey) : undefined
+    const id = mapped ?? (placeholder ? receipt : waiting ? receiptId(waiting) : active ?? key('dingtalk-feedback', message.id))
     const saved = this.context.state.get(cards(id))
     // A model may enqueue its acknowledgement before the receipt was delivered. Never overwrite that feedback with a late placeholder.
     if (placeholder && saved?.used) return
@@ -47,14 +51,21 @@ export class DingTalkCards {
     if (waiting) this.context.state.set(pendingKey, pending.filter(item => item !== waiting))
     const card: Card = saved ?? { triggerId: waiting ?? origin.id, conversationId, templateId: this.templateId, used: false, sent: false }
     if (message.ticketId) card.ticketId = message.ticketId
-    if (!placeholder) card.used = true
+    if (!placeholder) {
+      card.used = true
+      card.messages ??= []
+      if (!card.messages.some(item => item.id === message.id)) card.messages.push({ id: message.id, text: message.text,
+        flowStatus: message.kind === 'acknowledgement' && !!message.ticketId ? '2' : '3' })
+      if (activeKey) this.context.state.set(activeKey, id)
+    }
     this.context.state.set(cards(id), card)
-    const taskLabel = message.ticketId ? `#${message.ticketId.slice(0, 12)}` : ''
-    const data = { title: [taskLabel, this.robotName].filter(Boolean).join(' '), status: placeholder ? '处理中' : '完成',
-      markdown: taskLabel ? `${taskLabel}\n\n${message.text}` : message.text, flowStatus: placeholder ? '1' : '3',
-      replyHint: placeholder ? '已收到消息，等待处理。' : taskLabel
-        ? `引用回复此卡片并 @${this.robotName}。若客户端未带回引用摘要，请在正文附上 ${taskLabel}。`
-        : `请在群里 @${this.robotName} 继续沟通。`,
+    const taskLabel = card.ticketId ? `#${card.ticketId.slice(0, 12)}` : ''
+    const flowStatus = placeholder ? '1' : card.messages!.at(-1)!.flowStatus
+    const text = placeholder ? message.text : card.messages!.map(item => item.text).join('\n\n---\n\n')
+    const data = { title: [taskLabel, this.robotName].filter(Boolean).join(' '),
+      status: flowStatus === '1' ? '处理中' : flowStatus === '2' ? '输出中' : '完成',
+      markdown: taskLabel ? `${taskLabel}\n\n${text}` : text, flowStatus,
+      replyHint: '---\n\n引用此卡片以回复消息。',
     }
     const body = { outTrackId: id, cardData: { cardParamMap: data } }
     const response = await this.http(`https://api.dingtalk.com/v1.0/card/instances${card.sent ? '' : '/createAndDeliver'}`, {
