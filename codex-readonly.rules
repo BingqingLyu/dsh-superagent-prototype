@@ -1,6 +1,22 @@
-# Shared native Codex policy for read-only PR inspection using the host's configured gh identity.
+# Shared native Codex policy letting the host's configured gh identity drive CI inspection and release operations.
+# Read-only inspection stays sandboxed; release operations run with CODEX_SANDBOX=workspace-write plus these credential rules.
 prefix_rule(
     pattern = ["gh", "pr", ["list", "view", "checks"]],
     decision = "allow",
     justification = "Read-only GitHub PR inspection may use the host credential store; keep other commands sandboxed.",
+)
+prefix_rule(
+    pattern = ["gh", "run", ["list", "view"]],
+    decision = "allow",
+    justification = "Read-only GitHub Actions run inspection (list/view, including --log-failed) may use the host credential store.",
+)
+prefix_rule(
+    pattern = ["gh", "workflow", ["run", "view", "list"]],
+    decision = "allow",
+    justification = "Dispatching and inspecting workflows (the release dry-run) may use the host credential store; run with workspace-write.",
+)
+prefix_rule(
+    pattern = ["gh", "release", ["create", "view", "list"]],
+    decision = "allow",
+    justification = "Creating and inspecting a GitHub Release after human confirmation may use the host credential store; run with workspace-write.",
 )

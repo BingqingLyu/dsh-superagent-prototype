@@ -90,6 +90,6 @@ export class Replies extends EnginePart {
     }
     return { id, status: this.options.outbox.status(id) ?? 'pending', reused: existing !== undefined }
   }
-  /** The conversation a ticket started in: its origin Trigger's Channel, else its first Channel. */
-  private sourceChannel(ticket: Ticket): ChannelRef | undefined { return this.source(ticket)?.channel ?? ticket.channels[0] }
+  /** The conversation a ticket's result and attention go to: its `replyChannel`, else its origin Trigger's Channel, else its first Channel. */
+  private sourceChannel(ticket: Ticket): ChannelRef | undefined { return ticket.replyChannel ?? this.source(ticket)?.channel ?? ticket.channels[0] }
 }

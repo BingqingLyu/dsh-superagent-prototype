@@ -135,7 +135,7 @@ export class Runtime extends Service implements SourceHost {
       const { assessor, executor } = this
       const policy = () => settingsPolicy(store.settings(), sources)
       const engine = this.engine = new Engine({ repo: store, scope: sources, policy, assessor, executor,
-        outbox, prepareTicket: (ticket, outcome) => executor.prepare(ticket, outcome), emit: event => {
+        outbox, prepareTicket: (ticket, outcome) => this.prepareReportChannel(executor.prepare(ticket, outcome)), emit: event => {
           // Notify the main Session only about domain events it did not initiate itself.
           const notice = this.quiet ? undefined : eventNotice(event, id => store.tickets.get(id))
           if (notice) sessions.notify(...notice)
@@ -189,6 +189,19 @@ export class Runtime extends Service implements SourceHost {
     const trigger = sourceTrigger(this, ticket)
     const { setup: { deployment }, sources } = this
     return ticketEnvironment({ deployment, sources, settings: this.store.settings(), ticket, ...trigger ? { trigger } : {} })
+  }
+  /**
+   * Routes a CI ticket's result and attention to the configured DingTalk report group instead of its origin GitHub channel,
+   * so CI analysis is reported to the group rather than back onto a PR or commit. Subscriptions are left untouched, so later
+   * discussion on the PR still fans out to the ticket. Tickets that are not CI, or with no report group configured, are unchanged.
+   */
+  private prepareReportChannel(ticket: Ticket): Ticket {
+    if (this.store.triggers.get(ticket.origin.triggerId)?.meta.ci !== true) return ticket
+    const dingtalk = this.sources.instance<{ reportConversationId?: string }>('dingtalk')
+    const conversation = dingtalk?.enabled ? dingtalk.config.reportConversationId : undefined
+    if (!conversation) return ticket
+    const channel = { source: 'dingtalk', thread: `dingtalk:${conversation}`, address: { conversationId: conversation } }
+    return { ...ticket, replyChannel: channel, channels: [channel] }
   }
   checkSetup(): void { this.setup.check() }
   receive(trigger: Trigger): ReceiveResult { return this.passes.receive(trigger) }

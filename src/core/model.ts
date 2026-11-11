@@ -281,6 +281,11 @@ export interface Ticket {
   mandate: Mandate
   /** The Channels of the messages it was accepted from, which its replies go to. */
   channels: ChannelRef[]
+  /**
+   * The Channel its result and attention replies go to, overriding the origin Trigger's Channel and `channels`; a ticket
+   * whose work is reported somewhere other than where it was requested (such as CI analysis reported to a group) sets it.
+   */
+  replyChannel?: ChannelRef
   /** When, by whom, and how the ticket ended, with a person's or the host's reason beyond the outcome; an open ticket has none. */
   ended?: { at: string; by: TicketEndBy; outcome: TicketOutcome; reason?: string }
   /** Open question for a person; cleared by the executor or when the ticket ends. */

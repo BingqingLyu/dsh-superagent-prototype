@@ -30,7 +30,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
   ['An assessment judges every enabled rule and accepts only a settled, bounded change', 'admission',
     ['Return rule_assessments with exactly one entry for every enabled rule',
       'a reason saying that a rule does not apply cannot be a positive match',
-      'Accept only when implementation was requested, target_basis is specified or existing-standard, and no product/design decision remains',
+      'Accept only when the direction is settled: target_basis is specified or existing-standard and no product/design decision remains',
       'may qualify without pixel values or CSS instructions', 'no ACK, worker, worktree or unsolicited clarification question',
       'this banner looks different from the other cards',
         'Never replay old messages or dispatch invalidated historical approvals']],

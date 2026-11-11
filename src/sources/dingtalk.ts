@@ -147,8 +147,17 @@ export class DingTalk {
   async start(): Promise<void> {
     await this.client.connect()
     if (!this.client.connected) { this.client.disconnect(); throw new Error('DingTalk Stream did not connect') }
+    this.seedReportRoute()
     this.context.report('dingtalk', { state: 'ready', detail: 'Stream connected' })
     this.log('dingtalk_connected')
+  }
+  /** Seeds a permanent group-send route for the configured CI report group, so analysis tickets can report there before anyone messages the bot; an existing incoming route is kept. */
+  private seedReportRoute(): void {
+    const conversation = this.context.config<{ reportConversationId?: string }>('dingtalk')?.reportConversationId
+    if (!conversation || this.context.state.get(routes(conversation))) return
+    const robotCode = process.env.DINGTALK_ROBOT_CODE || this.credentials.clientId
+    // expires 0 makes send() always use the application group-send API; a proactive report has no session webhook.
+    this.context.state.set(routes(conversation), { webhook: '', expires: 0, robotCode, conversationId: conversation })
   }
   stop(): void { this.client.disconnect() }
   private async accessToken(): Promise<string> {
@@ -170,12 +179,12 @@ export class DingTalk {
     const text = message.ticketId ? `${label(message.ticketId)} ${message.text}` : message.text
     if (text.length > 4000) throw new Error('DingTalk result exceeds 4000 characters; provide a brief result and a link')
     if (this.cards) { await this.cards.send(message); return }
-    const url = new URL(route.webhook)
-    if (url.protocol !== 'https:' || url.hostname !== 'oapi.dingtalk.com') throw new Error('Invalid DingTalk session webhook')
     const token = await this.accessToken()
-    // A long coding task can outlive the session webhook. Use the application group-send API after expiry.
+    // A long coding task can outlive the session webhook, and a seeded report route has none; both use the application group-send API.
     const active = route.expires > Date.now() + 5000
-    const response = await this.http(active ? url : 'https://api.dingtalk.com/v1.0/robot/groupMessages/send', {
+    const url = active ? new URL(route.webhook) : undefined
+    if (url && (url.protocol !== 'https:' || url.hostname !== 'oapi.dingtalk.com')) throw new Error('Invalid DingTalk session webhook')
+    const response = await this.http(url ?? 'https://api.dingtalk.com/v1.0/robot/groupMessages/send', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-acs-dingtalk-access-token': token },
       signal: AbortSignal.timeout(15000), body: JSON.stringify(active
         ? { msgtype: 'text', text: { content: text } }
@@ -193,7 +202,10 @@ export function dingTalkKind(send: (message: OutboundMessage) => Promise<void>):
   return {
     kind: 'dingtalk', title: { zh: '钉钉', en: 'DingTalk' },
     description: { zh: 'Stream 群内 @ 消息（所有消息类型）', en: 'Stream group mentions (all message types)' },
-    schema: z.object({}).strict(), fields: [], health: ['dingtalk'],
+    schema: z.object({ reportConversationId: z.string().min(1).optional() }).strict(),
+    fields: [{ key: 'reportConversationId', type: 'text', label: { zh: 'CI 报告群', en: 'CI report group' },
+      hint: { zh: '钉钉群的 conversationId。CI 分析工单的结果与确认会发进这个群；机器人必须在群里且有发送群消息的权限。留空则不单独报告。', en: 'The conversationId of a DingTalk group. CI analysis tickets report their results and confirmations here; the bot must be in the group with permission to send group messages. Leave empty to disable.' } }],
+    health: ['dingtalk'],
     scope: ({ meta }) => meta.conversationType === '2' ? { listened: true, observed: false, row: 'group' }
       : { listened: false, reason: 'Only group messages are supported' },
     channel: {

@@ -6,7 +6,7 @@ import { sameName } from '../infra/text.ts'
 import type { SourceContext } from './host.ts'
 import { githubPage, SOURCE, UserSchema } from './github-trigger.ts'
 
-const PullSchema = z.looseObject({
+export const PullSchema = z.looseObject({
   title: z.string().optional(), state: z.string(), html_url: z.string(), user: UserSchema,
   body: z.string().nullish(), created_at: z.string().optional(),
   merged: z.boolean().optional(), merged_at: z.string().nullish(), closed_at: z.string().nullish(), auto_merge: z.unknown().optional(),

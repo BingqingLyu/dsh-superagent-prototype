@@ -25,11 +25,14 @@ Set the installation variables **before the first start**; see [codex.example.en
 SUPERAGENT_REPOSITORY=/absolute/path/to/local/neug \
 SUPERAGENT_GITHUB_REPOSITORY=alibaba/neug \
 SUPERAGENT_STATE_DIR="$PWD/state-codex" \
+DINGTALK_REPORT_CONVERSATION_ID=<report-group-conversationId> \
 CODEX_BINARY=/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex \
 CODEX_MODEL=gpt-6.1-sol \
 CODEX_SANDBOX=read-only \
 node lib/codex-cli.js --env-file /absolute/path/to/dingtalk.env
 ```
+
+`DINGTALK_REPORT_CONVERSATION_ID` is optional: it names the DingTalk group where CI analysis results are sent. The robot must already be in that group with the "send group messages" permission. `DINGTALK_ROBOT_CODE` optionally overrides the robotCode used for the report group (defaults to `DINGTALK_CLIENT_ID`).
 
 The bundled CLI above was available on the test machine; another compatible Codex executable can be used. Stop any older listener for this same DingTalk robot before starting this entry.
 
@@ -76,13 +79,25 @@ Git's credential helper uses the remote repository path (`credential.useHttpPath
 
 App installations have no personal notification inbox. App mode polls repository Issue/PR and comment streams instead to discover mentions, and reads reviews on changed PRs and subscribed threads. Existing observation switches, policy gates, cursors and deduplication still apply; enabling App authentication does not enable proactive work or group broadcasts. Polling uses the original initial-baseline behavior rather than replaying repository history.
 
-For macOS CLI credentials stored in Keychain, keep the sandbox and use Codex's native execution rules for the intended commands. Install [codex-readonly.rules](../codex-readonly.rules) as `~/.codex/rules/superagent-readonly.rules` and restart the service. It permits only `gh pr list/view/checks` to run with host permissions; it neither copies tokens nor changes login state. Every subsequent Worker inherits the same native rules. Other tools can use the same operator-managed rule mechanism; they do not require separate credential-injection code. The adapter uses `on-request` with user review, and declines unresolved approval prompts in headless mode instead of auto-granting them. Model subagents remain disabled.
+For macOS CLI credentials stored in Keychain, keep the sandbox and use Codex's native execution rules for the intended commands. Install [codex-readonly.rules](../codex-readonly.rules) as `~/.codex/rules/superagent-readonly.rules` and restart the service. It permits `gh pr list/view/checks`, `gh run list/view`, `gh workflow run/view/list` and `gh release create/view/list` to run with host permissions; it neither copies tokens nor changes login state. Every subsequent Worker inherits the same native rules. For release operations that need file writes (bump, freeze branch, notes), use `CODEX_SANDBOX=workspace-write` together with the same rule file. Other tools can use the same operator-managed rule mechanism; they do not require separate credential-injection code. The adapter uses `on-request` with user review, and declines unresolved approval prompts in headless mode instead of auto-granting them. Model subagents remain disabled.
 
 An authentication failure inside a sandbox does not prove the host login expired. Test the configured native command rule before asking the user to log in again. `workspace-write` alone does not grant macOS Keychain access.
 
-The first start seeds the original Settings schema: GitHub repository/CLI, the prepare command creating a ticket worktree, and DingTalk admission row `group.unlistedAddressed=explicit`. This allows every received group mention without a user/group whitelist. Later starts keep the original settings history; installation settings are managed through the original settings API, rather than overwritten from environment variables.
+The first start seeds the original Settings schema: GitHub repository/CLI with CI monitoring enabled (`observeCi`, `observePrCi`, `watchWorkflows` for nightly/release/package), the prepare command creating a ticket worktree, DingTalk admission row `group.unlistedAddressed=explicit`, GitHub admission rows `ci/prCi/runs` set to `inferred`, the `ci-analysis` rule, accept mode `auto`, and the `neug-ci`/`neug-release` team skills. If `DINGTALK_REPORT_CONVERSATION_ID` is set, the DingTalk report group is seeded. This allows every received group mention without a user/group whitelist and admits CI failures as analysis-only tickets. Later starts keep the original settings history; installation settings are managed through the original settings API, rather than overwritten from environment variables.
 
 The original loopback management API is served at `http://127.0.0.1:3082/orchestrator/api/`; `SUPERAGENT_PORT` changes the port. Its original same-origin/header checks remain. This does not provide the DSH desktop/web UI shell.
+
+## Upgrading an existing installation
+
+The first-start seed only applies to a fresh state directory. To enable CI monitoring and release automation on an already-running service, use the one-shot upgrade script:
+
+```sh
+node scripts/neug-ops-enable.mjs --report-conversation <conversationId>
+```
+
+`--url` defaults to `DSH_SUPERAGENT_URL` or `http://127.0.0.1:3082`; `--report-conversation` defaults to `DINGTALK_REPORT_CONVERSATION_ID`. The script merges each settings block through the loopback management API (GitHub config, DingTalk report group, policy admission rows and `ci-analysis` rule, eval mode `auto`, and the two team skills). Re-running is safe. Restart the service afterwards so the GitHub polling loops pick up the new configuration.
+
+Alternatively, save each block manually through the panel or the API: `PUT settings/source:github` (add `observeCi`, `observePrCi`, `watchWorkflows`), `PUT settings/source:dingtalk` (add `reportConversationId`), `PUT settings/policy` (set `ci/prCi/runs` admission to `inferred`, append the `ci-analysis` rule), `PUT settings/eval` (mode `auto`), and `PUT prompts` (add the `neug-ci` and `neug-release` team skills). Each block carries its own revision; read `GET settings` first.
 
 The database is `state-codex/orchestrator.sqlite`. Codex thread IDs, durable inboxes and session events use that Store's KV, while ticket/assignment/outbox data use the original tables. Earlier experimental `standalone/state` data and worktrees are retained on disk but are not imported or executed by this entry. Reissue an old experimental request as a new request after switching.
 

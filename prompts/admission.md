@@ -33,10 +33,16 @@ One source message produces at most one ticket.
 If matching rules conflict or the scope is ambiguous, ignore quietly.
 Rule order has no priority.
 
-Every decision, including ignore and unavailable, must provide direction: implementation_requested, target_basis, requires_design_decision and evidence.
+Every decision, including ignore and unavailable, must provide direction: implementation_requested, work_kind, target_basis, requires_design_decision and evidence.
 Evidence must identify the source statements and any established target/reference; do not invent evidence to make the booleans pass.
-Accept only when implementation was requested, target_basis is specified or existing-standard, and no product/design decision remains.
+Accept only when the direction is settled: target_basis is specified or existing-standard and no product/design decision remains, and either implementation was requested (work_kind implementation) or an enabled rule authorizes analysis-only work (work_kind analysis).
 These declarations are your semantic judgments, not proof supplied by the schema.
+
+A CI failure candidate — a PR's checks, the default branch's CI, or a completed watched run such as nightly, release or package — is analysis-only work, not an implementation request.
+When an enabled rule authorizes it, accept with work_kind analysis, implementation_requested false, target_basis specified (the failed run or checks named), requires_design_decision false, and a scope limited to read-only diagnosis and a group report: no code change, no re-run, no release.
+A workflow run's trigger text is self-contained and has no thread conversation; assess it directly without reading a thread.
+Ignore success and recovery events, and ignore a failure whose thread already has an active ticket covering the same run, since that ticket already receives the thread's messages.
+Analysis acceptance still requires a matching enabled rule and intent_evidence quoting the failure; never accept a CI event without rule authorization, and never let analysis expand into editing code.
 
 For visual feedback, locating a component, identifying a CSS file or estimating a few changed lines does not establish a small or authorized change.
 A screenshot of something described as inconsistent, ugly or in need of being easier to understand is not by itself a target design.

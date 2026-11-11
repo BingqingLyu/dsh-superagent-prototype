@@ -1048,6 +1048,17 @@ describe('replies', () => {
     expect(h.engine.reply({ purpose: 'result', ticketId, text: 'Done' })).toMatchObject({ status: 'pending' })
     expect(h.outbox.at(-1)!.channel).toEqual(trigger('1').channel)
   })
+  it('routes a result and attention through the ticket\'s replyChannel when set, instead of the origin channel', () => {
+    const reportChannel = { source: 'dingtalk', thread: 'dingtalk:cid123', address: { conversationId: 'cid123' } }
+    const h = harness({}, { prepareTicket: ticket => ({ ...ticket, replyChannel: reportChannel, channels: [reportChannel] }) })
+    const ticketId = accepted(h).ticketId!
+    h.engine.report(ticketId, { state: 'progress', summary: 'asking', question: 'Confirm release?' })
+    h.engine.reply({ purpose: 'attention', ticketId, question: 'Confirm release?', text: 'Confirm?' })
+    expect(h.outbox.at(-1)!.channel).toEqual(reportChannel)
+    h.engine.report(ticketId, { state: 'ready', summary: 'Done' })
+    h.engine.reply({ purpose: 'result', ticketId, text: 'Released' })
+    expect(h.outbox.at(-1)!.channel).toEqual(reportChannel)
+  })
 })
 describe('ticket commands', () => {
   it('ends a ticket by the same rule on a close and on a ready report: once no PR it opened is open, as the latest of them ended', () => {

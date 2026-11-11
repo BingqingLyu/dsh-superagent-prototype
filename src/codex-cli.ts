@@ -15,10 +15,14 @@ import { CodexHarness } from './harness/codex.ts'
 import { DingTalk, dingTalkKind } from './sources/dingtalk.ts'
 import { githubKind, watchGithub } from './sources/github.ts'
 import { GithubAppSchema } from './infra/github-app.ts'
+import { Prompts, defaultPrompts } from './app/prompts.ts'
+import { loadSkillDir } from './app/skill-files.ts'
 
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`
 const reference = <T>(value: T) => ({ get: () => value })
 const log = (event: string) => console.log(JSON.stringify({ at: new Date().toISOString(), event }))
+/** The proactive rule that turns a GitHub CI failure into a read-only analysis ticket reported to the DingTalk group. */
+const CI_ANALYSIS_RULE = 'Accept a GitHub CI failure event — a failed PR check, or a completed nightly.yml, release.yml or package.yml run whose conclusion is failure or cancelled — as an analysis-only ticket (work_kind analysis). Scope: read the failed run\'s logs with gh, locate the root cause (code or test defect, flake, environment/infra, or credentials/secrets), and report a concise conclusion with evidence, a suggested next step and links to the DingTalk report group. Do not modify code, open a PR, re-run or cancel any workflow, or publish anything. Ignore success or recovery events, and ignore a failure already covered by a live ticket on the same thread, such as a release ticket waiting on that run.'
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
   const usage = 'Usage: node lib/codex-cli.js [--env-file /absolute/path/to/env]'
@@ -54,15 +58,27 @@ async function main(): Promise<void> {
           if (!match) throw new Error('Set SUPERAGENT_GITHUB_REPOSITORY=owner/name')
           return match[1]!
         })()
-        store.saveSettings(SettingsSchema.parse({
+        const reportConversationId = process.env.DINGTALK_REPORT_CONVERSATION_ID
+        const settings = SettingsSchema.parse({
           sources: { github: { enabled: true, config: { repository: remote, cli: process.env.SUPERAGENT_GITHUB_CLI ?? 'gh',
-            ...(githubApp ? { app: githubApp } : {}) } },
-            dingtalk: { enabled: true, config: {} } },
+              observeCi: true, observePrCi: true, watchWorkflows: ['nightly.yml', 'release.yml', 'package.yml'],
+              ...(githubApp ? { app: githubApp } : {}) } },
+            dingtalk: { enabled: true, config: reportConversationId ? { reportConversationId } : {} } },
           // Use the original admission table to allow every mentioned sender; no new gate or whitelist implementation.
-          policy: { sources: { dingtalk: { allowed: [], admission: { group: { unlistedAddressed: 'explicit' } } } } },
+          // CI events have no sender, so the ci/prCi/runs rows admit them as inferred candidates for the ci-analysis rule.
+          policy: { sources: { dingtalk: { allowed: [], admission: { group: { unlistedAddressed: 'explicit' } } },
+            github: { allowed: [], admission: { ci: { unlistedUnaddressed: 'inferred' }, prCi: { unlistedUnaddressed: 'inferred' }, runs: { unlistedUnaddressed: 'inferred' } } } } },
+          eval: { mode: 'auto' },
           executor: { maxWorkers: Number(process.env.SUPERAGENT_MAX_WORKERS ?? 3),
             prepare: `git -C ${quote(repository)} worktree add -b "agent/$DSH_SUPERAGENT_NAME" "$DSH_SUPERAGENT_DIR" HEAD` },
-        }))
+        })
+        settings.policy.rules.push({ id: 'ci-analysis', name: 'CI failure analysis', enabled: true, instruction: CI_ANALYSIS_RULE })
+        store.saveSettings(settings)
+        // Seed the neug team skills into the prompts configuration on first start, so both roles' Sessions register them.
+        const prompts = new Prompts(store, () => 100000, () => undefined, () => false)
+        if (prompts.current().revision === 0) {
+          prompts.save({ ...defaultPrompts(), skills: { 'neug-ci': loadSkillDir('neug-ci').content, 'neug-release': loadSkillDir('neug-release').content } }, 0, 'sync')
+        }
       }
     } finally { store.close() }
   } finally { release() }

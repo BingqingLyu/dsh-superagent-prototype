@@ -109,7 +109,7 @@ export class SourceRegistry implements SourceScope {
   threadContext(trigger: Trigger, settings = this.settings()): TriggerContext | undefined {
     const kind = this.kinds.get(trigger.source)
     const context = kind?.threadContext
-    if (!kind || !context) return undefined
+    if (!kind || !context || context.contextless?.(trigger)) return undefined
     const { config } = this.resolve(kind, settings.sources[kind.kind])
     return {
       messageId: context.messageId(trigger),

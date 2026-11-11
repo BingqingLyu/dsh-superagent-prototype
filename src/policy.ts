@@ -17,15 +17,22 @@ export const RuleAssessmentSchema = RuleMatchSchema.extend({ matched: z.boolean(
 export type RuleAssessment = z.infer<typeof RuleAssessmentSchema>
 export const AdmissionDirectionSchema = z.object({
   implementation_requested: z.boolean(),
+  work_kind: z.enum(['implementation', 'analysis']).default('implementation'),
   target_basis: z.enum(['specified', 'existing-standard', 'undetermined']),
   requires_design_decision: z.boolean(),
   evidence: z.string().trim().min(1).max(700),
 }).strict()
 export type AdmissionDirection = z.infer<typeof AdmissionDirectionSchema>
-/** Check whether an assessment established implementation intent and a settled target without open design decisions. */
+/**
+ * Check whether an assessment established a settled target without open design decisions and the intent its work kind needs:
+ * implementation requires an implementation request, while analysis-only work (such as diagnosing a CI failure and reporting
+ * it) does not, since it changes no code. Older directions without `work_kind` default to implementation.
+ */
 export function directionAllowed(value: unknown): value is AdmissionDirection {
   const result = AdmissionDirectionSchema.safeParse(value)
-  return result.success && result.data.implementation_requested && result.data.target_basis !== 'undetermined' && !result.data.requires_design_decision
+  if (!result.success) return false
+  const intent = result.data.work_kind === 'analysis' || result.data.implementation_requested
+  return intent && result.data.target_basis !== 'undetermined' && !result.data.requires_design_decision
 }
 export interface Assessment {
   decision: 'accept' | 'ignore' | 'unavailable'; rule_assessments: RuleAssessment[]; direction: unknown

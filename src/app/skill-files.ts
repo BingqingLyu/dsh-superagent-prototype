@@ -15,13 +15,25 @@ function packaged(...parts: string[]): { path: string; text: string } {
   if (!text.trim()) throw new Error(`Empty packaged file: ${path}`)
   return { path, text }
 }
-function load(name: string) {
-  const { path, text } = packaged('skills', `dsh-superagent-${name}`, 'SKILL.md')
+/** Parses a SKILL.md frontmatter (`name`, `description`) and its body, which is the text registered as the skill content. */
+function parseSkill(path: string, text: string) {
   const match = /^---\nname: ([^\n]+)\ndescription: ([^\n]+)\n---\n\n([\s\S]*)$/.exec(text)
   if (!match) throw new Error(`Invalid packaged skill: ${path}`)
   return { name: match[1]!, description: match[2]!, content: match[3]!, path }
 }
+function load(name: string) {
+  const { path, text } = packaged('skills', `dsh-superagent-${name}`, 'SKILL.md')
+  return parseSkill(path, text)
+}
 export const bundledSkills = { feishu: load('feishu'), github: load('github') }
+/**
+ * Loads a team skill directory (`skills/<dir>/SKILL.md`) with the same frontmatter parsing as the bundled skills, so a
+ * bootstrap may seed its body into the prompts configuration's `skills`.
+ */
+export function loadSkillDir(dir: string) {
+  const { path, text } = packaged('skills', dir, 'SKILL.md')
+  return parseSkill(path, text)
+}
 /**
  * Loads a built-in prompt file (`prompts/<name>.md`). Source `.md` files are written one sentence per line for
  * readable diffs; `promptFile` joins lines within each paragraph with spaces while keeping blank-line paragraph breaks.

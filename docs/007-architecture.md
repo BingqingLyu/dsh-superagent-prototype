@@ -291,19 +291,19 @@ Some generic modules still refer directly to GitHub or Feishu:
 | Path | Responsibility |
 | --- | --- |
 | `src/index.ts` | The main plugin entry: reads the machine settings, starts the Runtime, and gives it the restart that a save of a Source's account uses |
-| `src/codex-cli.ts` | Boots the original Runtime with the Codex host adapter and DingTalk Source; seeds original installation settings on first use |
+| `src/codex-cli.ts` | Boots the original Runtime with the Codex host adapter and DingTalk Source; seeds installation settings on first use, including CI monitoring, the `ci-analysis` rule, accept mode `auto` and the `neug-ci`/`neug-release` team skills |
 | `src/harness/codex.ts` | Translates host session, inbox, persistence and agent-event services into Codex calls; binds original role tools and prompts |
 | `src/harness/codex-rpc.ts` | Codex app-server stdio RPC, persisted thread/message IDs, turn start/steer/resume/interrupt and dynamic-tool dispatch |
-| `src/sources/dingtalk.ts` | DingTalk Stream group-mention Source for all message types, rich-text normalization and reply channel, registered with the original SourceRegistry |
+| `src/sources/dingtalk.ts` | DingTalk Stream group-mention Source for all message types, rich-text normalization and reply channel, with an optional report group for CI analysis results; registered with the original SourceRegistry |
 | `src/sources/dingtalk-cards.ts` | Optional AI waiting receipts and feedback cards; durable delivery and native group-input reply parameters |
 | `src/deployment.ts` | The plugin `Config` and `Machine`; `resolveDeployment` and `resolveFeishuBot` read the repository and the accounts from the Source settings, each CLI run as Executor shells run it; `SETUP_FIELDS` lists the Source fields setup reads. The code names no person, account or organization |
 | `src/setup.ts` | Setup problems: `SetupError`, with a code, the place that fixes it and the English text the log, the main Session and the panel share |
-| `src/policy.ts` | The Policy: the settings schemas by block, the Policy version, the gate and Mandate revalidation |
+| `src/policy.ts` | The Policy: the settings schemas by block, the Policy version, the gate, Mandate revalidation, and the admission direction's `work_kind` (implementation or analysis) |
 | `src/admission.ts` | The admission table's values, each cell's options and defaults, shared with the panel |
 | `src/limits.ts` | The limits of the values a person sets, which the settings schemas check and the panel's fields offer |
 | `src/kv.ts` | `KV`: every family of `kv` records with its key, its value's type and its owner, and the `Key` and `Family` types the Store and `SourceContext.state` take |
 | `src/navigation.ts` | Opens a DeepSeek Harness Session from the panel once the host's catalog lists it |
-| `src/core/model.ts` | The domain types, among them the typed Ticket and `MandateBasis`, with `threadKey`, `ticketOutcome`, `reached`, `followupOwners`, `settled`, `waitsForPerson`, `liveTicket`, `runningAssignment`, `latestAssignment` and `latestReport` |
+| `src/core/model.ts` | The domain types, among them the typed Ticket (with optional `replyChannel`) and `MandateBasis`, with `threadKey`, `ticketOutcome`, `reached`, `followupOwners`, `settled`, `waitsForPerson`, `liveTicket`, `runningAssignment`, `latestAssignment` and `latestReport` |
 | `src/core/ports.ts` | The ports: `Repositories`, `Policy`, `SourceScope`, `Assessor`, `Executor`, `Outbox`, and the domain events |
 | `src/core/engine.ts` | The Engine, the core's entry point, and the role interfaces `EngineForSources`, `EngineForMainSession`, `EngineForPeople`, `EngineForSettings` and `EngineForExecutor` |
 | `src/core/part.ts` | `EnginePart`, the base of the Engine's parts, and `EngineOptions` |
@@ -311,14 +311,14 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/core/evals.ts` | `Evals`: the Evals of Threads and their Decisions |
 | `src/core/tickets.ts` | `Tickets`: the Ticket lifecycle, the Threads a Ticket follows, Subscriptions and Inputs |
 | `src/core/assignments.ts` | `Assignments`: the Executor's facts and its workers' Reports |
-| `src/core/replies.ts` | `Replies`: the Engine's Channel writes |
+| `src/core/replies.ts` | `Replies`: the Engine's Channel writes, routing results and attention through the Ticket's `replyChannel` when set |
 | `src/core/stage.ts` | `ticketStage` and `canRetry`: the Ticket stages of [003 Execution](003-execution.md) |
 | `src/core/errors.ts` | `UserError` and `USER_ERRORS` |
 | `src/core/reasons.ts` | `Reason`, `REASONS` and `reasonText`: why the core recorded a Decision or set a Trigger aside, by code |
 | `src/core/ids.ts` | `key`: ids derived from their inputs, equal for equal inputs |
 | `src/core/memory.ts` | `MemoryRepositories`: the Store's repositories in memory, in the Store's order and with its nested rollback, for domain tests |
 | `src/core/index.ts` | The core's exports |
-| `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
+| `src/app/runtime.ts` | The Runtime, the composition root, with its start, stop and `prepareTicket` hook that injects a DingTalk report channel for CI tickets |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
 | `src/app/outbox.ts` | The Outbox: the Engine's `Outbox` port, the receipts and the `reply` effects that send them |
@@ -333,7 +333,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/settings-history.ts` | `policyHistory`: each saved settings revision with what it changed from the one before |
 | `src/app/prompts.ts` | Prompts, `builtInParts`, the built-in parts a team may override, and `promptParts`, the order of a role's prompt sections |
 | `src/app/context.ts` | The built-in prompt text, read from `prompts/`, and the transcript entries Sessions read |
-| `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, and the bundled skills |
+| `src/app/skill-files.ts` | Packaged text: `promptFile`, which joins a file's one-sentence lines into paragraphs, the bundled skills, and `loadSkillDir` for team skill directories |
 | `src/app/sessions.ts` | Sessions |
 | `src/app/delivery.ts` | `AgentDelivery`: delivers a message to a DeepSeek Harness agent once per request id, also across a restored Session |
 | `src/app/retry-health.ts` | `RetryHealth`: which Sessions wait on a model budget retry, for the `models` health entry |
@@ -369,8 +369,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/sources/registry.ts` | `SourceRegistry` |
 | `src/sources/host.ts` | `SourceHost`, `SourceContext`, `Health`, `health` and the fixed health texts |
 | `src/sources/poll.ts` | What GitHub and Feishu polling share: `POLL_HORIZON_MS`, `polled`, `cursorAt`, and `pollThreads`, which keeps a failure on its Thread as `pollError` |
-| `src/sources/github.ts` | The GitHub kind and plugin entry, exported as `./github-watch`: a poll round of notifications, the pull requests of open Tickets with their CI, and subscribed Threads |
-| `src/sources/github-trigger.ts` | GitHub comments, reviews, Issue bodies and CI changes as Triggers, and GitHub addresses |
+| `src/sources/github.ts` | The GitHub kind and plugin entry, exported as `./github-watch`: a poll round of notifications, the pull requests of open Tickets with their CI, subscribed Threads, all open PRs' CI, and completed runs of watched workflows |
+| `src/sources/github-trigger.ts` | GitHub comments, reviews, Issue bodies, CI changes and workflow run completions as Triggers, and GitHub addresses |
 | `src/sources/github-pull.ts` | The pull request rules: which pull requests a Ticket follows (`claimPull`, `observePull`), the closes it reports to the Engine, and `pullEndNotices`, the chat notice of a Ticket that ended merged or closed |
 | `src/sources/github-channel.ts` | The GitHub Channel: comments and review thread replies, `sent` or `gone` |
 | `src/sources/github-read.ts` | CI snapshots, repository reads, the `github/` resources, and `githubThreadContext`: an Issue's or pull request's conversation by page |
@@ -454,6 +454,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/draft.spec.ts`, `tests/prompt-config.spec.ts`, `tests/markdown.spec.ts`, `tests/marks.spec.ts` | Draft states, merges and the save bar's line; the prompt configuration by section and the line diff; the Markdown subset and its links; the mark of every state the views classify |
 | `tests/locales.spec.ts`, `tests/styles.spec.ts` | The copy in both languages, the stylesheet |
 | `tests/class-docs.spec.ts` | Every class in `src` has a JSDoc block before it |
+| `tests/neug-ci.spec.ts` | CI monitoring: workflowRunTrigger, DingTalk report route seed and group-send, loadSkillDir, prepareReportChannel logic |
 | `tests/docs.spec.ts` | Numbered documents link only to earlier ones, every local link resolves, no document has merge conflict markers, and this document's tables list every module and every test |
 
 `tests/fixtures/` holds what several tests share: `host.ts`, a simulated DeepSeek Harness host; `panel-server.ts` and `panel.tsx`, the fake management API and the panel around a page; `deployment.ts`, a resolved deployment; `git.ts`, the environment of every git the tests start, which names no repository; and `async.ts`.

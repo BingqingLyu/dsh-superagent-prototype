@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SettingsSchema, assessmentOutcome, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
+import { SettingsSchema, assessmentOutcome, directionAllowed, policyEffects, settingsPolicy, policyVersion, allowedSender, anyoneAllowed, type Settings } from '../src/policy.ts'
 import type { MandateBasis } from '../src/core/index.ts'
 import { migrateSettings } from '../src/app/migration.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
@@ -302,6 +302,34 @@ describe('assessment outcomes', () => {
   })
 })
 
+describe('work kind', () => {
+  const base = { target_basis: 'specified' as const, requires_design_decision: false, evidence: 'CI failure' }
+  it('allows analysis without an implementation request, but still requires a settled target and no design decision', () => {
+    expect(directionAllowed({ ...base, implementation_requested: false, work_kind: 'analysis' })).toBe(true)
+    expect(directionAllowed({ ...base, implementation_requested: false, work_kind: 'implementation' })).toBe(false)
+    expect(directionAllowed({ ...base, implementation_requested: false })).toBe(false)
+    expect(directionAllowed({ ...base, implementation_requested: true, work_kind: 'analysis' })).toBe(true)
+    expect(directionAllowed({ ...base, target_basis: 'undetermined', implementation_requested: false, work_kind: 'analysis' })).toBe(false)
+    expect(directionAllowed({ ...base, requires_design_decision: true, implementation_requested: false, work_kind: 'analysis' })).toBe(false)
+  })
+  it('accepts an analysis-only inferred candidate in auto mode with a matched rule', () => {
+    const parsed = SettingsSchema.parse({ eval: { mode: 'auto' } })
+    const rules = parsed.policy.rules.filter(rule => rule.enabled)
+    const assessment = { decision: 'accept' as const, direction: { ...base, implementation_requested: false, work_kind: 'analysis' as const },
+      title: 'CI analysis', scope: 'read logs and report', reason: 'CI failed', intent_evidence: 'run conclusion failure',
+      rule_assessments: rules.map((rule, index) => ({ rule_id: rule.id, matched: index === 0, reason: 'judged' })) }
+    expect(assessmentOutcome(assessment, parsed, 'inferred')).toMatchObject({ kind: 'accept', title: 'CI analysis' })
+  })
+  it('defaults an older direction without work_kind to implementation', () => {
+    const parsed = SettingsSchema.parse({ eval: { mode: 'auto' } })
+    const rules = parsed.policy.rules.filter(rule => rule.enabled)
+    const assessment = { decision: 'accept' as const, direction: { ...base, implementation_requested: false },
+      title: 'Fix', scope: 'small', reason: 'asked', intent_evidence: 'quote',
+      rule_assessments: rules.map((rule, index) => ({ rule_id: rule.id, matched: index === 0, reason: 'judged' })) }
+    expect(assessmentOutcome(assessment, parsed, 'inferred')).toMatchObject({ kind: 'ignore', reason: { code: 'directionUnsettled' } })
+  })
+})
+
 describe('admission table settings', () => {
   it('refuses an explicit cell for messages that do not address the agent, in the settings and in a submitted Policy', () => {
     for (const cell of ['listedUnaddressed', 'unlistedUnaddressed']) {
@@ -475,12 +503,14 @@ describe('bots and events without a sender', () => {
     expect(sources.scope(github({ kind: 'pull', number: 4, isPr: true }))).toEqual({ listened: true, observed: false, row: 'pulls' })
     expect(sources.scope(github({ kind: 'inline', number: 4 }))).toEqual({ listened: true, observed: false, row: 'comments' })
     expect(sources.scope(github({ ci: true, branch: 'main' }))).toEqual({ listened: true, observed: false, row: 'ci' })
-    expect(sources.scope(github({ ci: true, number: 4 }))).toEqual({ listened: true, observed: false })
+    expect(sources.scope(github({ ci: true, number: 4 }))).toEqual({ listened: true, observed: false, row: 'prCi' })
     const rows = githubKind.policy!.rows!({ observeIssues: true })
     expect(rows.map(row => [row.id, row.cells])).toEqual([
       ['issues', { listedUnaddressed: true, unlistedAddressed: true, unlistedUnaddressed: true }],
       ['pulls', { listedUnaddressed: false, unlistedAddressed: true, unlistedUnaddressed: false }],
       ['comments', { listedUnaddressed: false, unlistedAddressed: true, unlistedUnaddressed: false }],
-      ['ci', { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: false }]])
+      ['ci', { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: false }],
+      ['prCi', { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: false }],
+      ['runs', { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: false }]])
   })
 })

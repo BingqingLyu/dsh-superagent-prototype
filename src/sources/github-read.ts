@@ -158,6 +158,8 @@ async function conversationPage(commands: Commands, number: number, page: number
  */
 export const githubThreadContext: ThreadContext<unknown> = {
   messageId: trigger => trigger.url ?? '',
+  // A workflow run Thread has no conversation; its self-contained Trigger text is the whole assessment context.
+  contextless: trigger => trigger.meta.run === true,
   read: async (commands, trigger, part, cursor) => {
     // The default branch's CI has no conversation; its Trigger is its context.
     if (typeof trigger.meta.branch === 'string') {

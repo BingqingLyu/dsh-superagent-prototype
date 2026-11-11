@@ -5,7 +5,7 @@ import { backfillChat, consumerRetry, feishuKind, feishuTriggerId, feishuRef, fe
 import { KV } from '../src/kv.ts'
 import { apply as applyFeishu, pollThreads as pollFeishuThreads } from '../src/sources/feishu.ts'
 import { runFeishu } from '../src/sources/feishu-loops.ts'
-import { commentTrigger, githubAddress, githubChannel, issueTrigger, type GithubComment, type GithubIssue } from '../src/sources/github-trigger.ts'
+import { commentTrigger, githubAddress, githubChannel, issueTrigger, workflowRunTrigger, type GithubComment, type GithubIssue, type WorkflowRun } from '../src/sources/github-trigger.ts'
 import { claimPull, observePull, pullEndNotices, pullOf, ticketBranch, type Pull } from '../src/sources/github-pull.ts'
 import { ciCounts, ciFact, ciSummary } from '../src/sources/github-read.ts'
 import { apply as applyGithub, githubKind, pollFailure, pollRound } from '../src/sources/github.ts'
@@ -1024,7 +1024,7 @@ it('reports GitHub as failing only after the configured number of consecutive fa
   expect(pollFailure(2, 3, eof)).toBeUndefined()
   expect(pollFailure(3, 3, eof)).toEqual({ state: 'error', detail: '3 consecutive failed polls; last: Error: Get "https://api.github.com/x": EOF', code: 'pollFailures', values: { count: '3', error: 'Error: Get "https://api.github.com/x": EOF' } })
   expect(githubKind.schema.parse({})).toEqual({ repository: '', cli: '', pollSeconds: 60, failuresBeforeError: 3, observeIssues: false,
-    observePulls: false, observeComments: false, observeCi: false })
+    observePulls: false, observeComments: false, observeCi: false, observePrCi: false, watchWorkflows: [] })
 })
 describe('feishu event consumer', () => {
   let dir: string
@@ -1431,6 +1431,73 @@ describe('observing the GitHub repository', () => {
     expect(h.receive.mock.calls[0]![0]).toMatchObject({ human: false, actor: { id: '' }, threads: [{ source: 'github', id: 'ci:main' }],
       meta: { ci: true, branch: 'main', sha: 'bbb2222' }, url: 'https://github.com/acme/widgets/commit/bbb2222' })
     expect(h.receive.mock.calls[0]![0].text).toContain('Read github/commits/bbb2222/checks for every check.')
+    h.store.close()
+  })
+})
+
+describe('CI monitoring: open PR checks and workflow runs', () => {
+  const pr = (number: number, sha = 'abc') => ({ number, title: `PR ${number}`, state: 'open',
+    html_url: `https://github.com/acme/widgets/pull/${number}`, user: { login: 'carol' },
+    head: { sha, ref: `fix-${number}`, repo: { full_name: 'acme/widgets' } } })
+  const enable = (h: ReturnType<typeof host>, config: Record<string, unknown>) =>
+    h.store.saveSettings({ ...h.store.settings(), sources: { ...h.store.settings().sources, github: { enabled: true, config } } })
+  it('baselines open PR CI on the first poll and triggers on a change', async () => {
+    const h = host()
+    enable(h, { observePrCi: true })
+    const routes: Record<string, unknown> = { notifications: [], pulls: [pr(7)],
+      'commits/abc/check-runs': { check_runs: [{ name: 'test', status: 'completed', conclusion: 'success' }] } }
+    github(h, routes)
+    await pollRound(h)
+    expect(h.receive).not.toHaveBeenCalled()
+    routes['commits/abc/check-runs'] = { check_runs: [{ name: 'test', status: 'completed', conclusion: 'failure' }] }
+    await pollRound(h)
+    expect(h.receive).toHaveBeenCalledTimes(1)
+    expect(h.receive.mock.calls[0]![0]).toMatchObject({ human: false, meta: { ci: true, number: 7, failed: true },
+      threads: [{ source: 'github', id: '7' }] })
+    h.store.close()
+  })
+  it('baselines workflow runs on the first poll, then triggers once per new completed run with failed jobs', async () => {
+    const h = host()
+    enable(h, { watchWorkflows: ['nightly.yml'] })
+    const run = (id: number, conclusion: string) => ({ id, conclusion, event: 'schedule', head_branch: 'main', head_sha: 'aaa1111',
+      html_url: `https://github.com/acme/widgets/actions/runs/${id}` })
+    const routes: Record<string, unknown> = { notifications: [],
+      'actions/workflows/nightly.yml/runs': { workflow_runs: [run(100, 'success')] } }
+    github(h, routes)
+    await pollRound(h)
+    expect(h.receive).not.toHaveBeenCalled()
+    // A new failed run appears; the old one is not re-emitted.
+    routes['actions/workflows/nightly.yml/runs'] = { workflow_runs: [run(101, 'failure'), run(100, 'success')] }
+    routes['actions/runs/101/jobs'] = { jobs: [{ name: 'build', conclusion: 'failure' }, { name: 'lint', conclusion: 'success' }] }
+    await pollRound(h)
+    expect(h.receive).toHaveBeenCalledTimes(1)
+    const trigger = h.receive.mock.calls[0]![0]
+    expect(trigger).toMatchObject({ id: 'github-run:nightly.yml:101', human: false, meta: { ci: true, run: true, workflow: 'nightly.yml', runId: 101, conclusion: 'failure', failed: true },
+      threads: [{ source: 'github', id: 'run:nightly.yml' }] })
+    expect(trigger.text).toContain('Failed jobs: build.')
+    expect(trigger.text).toContain('nightly.yml')
+    // A third poll with no new runs emits nothing.
+    await pollRound(h)
+    expect(h.receive).toHaveBeenCalledTimes(1)
+    h.store.close()
+  })
+  it('skips run: threads in pollThread, like ci: threads', async () => {
+    const h = host()
+    h.store.threads.save({ key: 'github:run:nightly.yml', ref: { source: 'github', id: 'run:nightly.yml' }, createdAt: '',
+      subscriptions: ['t1'], correlated: [], pending: [], meta: {} })
+    const reads = github(h, { notifications: [] })
+    await pollRound(h)
+    // No issues/ or pulls/ read for the run thread.
+    expect(reads.filter(path => /^(issues|pulls)\//.test(path))).toEqual([])
+    h.store.close()
+  })
+  it('scopes prCi and runs triggers to their admission rows', () => {
+    const h = host()
+    enable(h, { observePrCi: true, watchWorkflows: ['nightly.yml'] })
+    const ciTrigger = { id: 'x', source: 'github', threads: [{ source: 'github', id: '7' }], actor: { source: 'github', id: '' }, human: false, at: '', text: 'CI', meta: { ci: true, number: 7, isPr: true } }
+    const runTrigger = { id: 'y', source: 'github', threads: [{ source: 'github', id: 'run:nightly.yml' }], actor: { source: 'github', id: '' }, human: false, at: '', text: 'Run', meta: { ci: true, run: true, workflow: 'nightly.yml' } }
+    expect(h.sources.scope(ciTrigger as never)).toMatchObject({ listened: true, observed: true, row: 'prCi' })
+    expect(h.sources.scope(runTrigger as never)).toMatchObject({ listened: true, observed: true, row: 'runs' })
     h.store.close()
   })
 })

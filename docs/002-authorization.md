@@ -58,7 +58,7 @@ For an unlisted person, an explicit admission cell takes precedence even on a Th
 Each Source's Policy has an admission table. Its rows are receiving scopes:
 
 - **Feishu:** each configured chat, other chats the bot receives mentions from, and direct messages. Other chats are received only when **其他群** is set to **仅 @** on the Feishu card.
-- **GitHub:** new Issues, new pull requests, comments and the default branch's CI.
+- **GitHub:** new Issues, new pull requests, comments, the default branch's CI, all open pull requests' CI (where `observePrCi` is on), and completed runs of watched workflows (where `watchWorkflows` is non-empty).
 
 A row has up to three cells. Each cell decides whether a message becomes an explicit request, an inferred candidate or nothing:
 
@@ -101,6 +101,10 @@ The accept mode is part of the Policy:
 Explicit requests work in every mode. Start in `observe` and switch to `auto` after reviewing the recorded Decisions. Each assessment judges every enabled rule exactly once, whether it matches or not. A proactive accept requires at least one matching rule.
 
 Each rule describes a kind of proactive work. The Ticket's Mandate records the matched rules, and its Executor receives their names and instructions.
+
+### Work kind
+
+An assessment's direction carries a `work_kind`: `implementation` (the default) or `analysis`. Implementation work requires an implementation request, a settled target and no open design decision. Analysis-only work — such as diagnosing a CI failure and reporting the conclusion to a group — requires a settled target and no open design decision, but does not require an implementation request, since it changes no code. A rule may authorise analysis-only tickets for events that would otherwise be ignored, such as a CI failure with no human sender. Older assessments without `work_kind` default to implementation.
 
 For that Ticket, a rule's process and communication requirements override the defaults. A silence rule can suppress an acknowledgement; a review rule can name the required reviewer and approval before merge. Requirements that apply to every Ticket belong in team prompt sections instead.
 

@@ -5,11 +5,11 @@ import { sameName } from '../infra/text.ts'
 import { GithubAccountsSchema } from '../deployment.ts'
 import { CliError, validItems, type Tally } from '../infra/commands.ts'
 import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks } from './github-read.ts'
-import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE }
+import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE, workflowRunTrigger }
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
-import { observePull, pullsOf, readPull, type Pull } from './github-pull.ts'
+import { observePull, PullSchema, pullsOf, readPull, type Pull } from './github-pull.ts'
 import { health, sourceContext, type Health, type SourceContext } from './host.ts'
 import { KV } from '../kv.ts'
 import { cursorAt, pause, POLL_HORIZON_MS, pollThreads as pollEach } from './poll.ts'
@@ -22,15 +22,23 @@ const NotificationSchema = z.looseObject({
   repository: z.looseObject({ full_name: z.string() }), subject: z.looseObject({ url: z.string().nullish() }),
 })
 
+/** A workflow file name the Source may watch; GitHub keeps them flat under `.github/workflows`, so a bare `name.yml` is enough. */
+const WorkflowFileSchema = z.string().regex(/^[A-Za-z0-9_.\-]+\.ya?ml$/, 'Use a workflow file name such as nightly.yml')
 const GithubConfigSchema = GithubAccountsSchema.extend({ pollSeconds: z.number().int().min(60).max(3600).default(60),
   failuresBeforeError: z.number().int().min(1).max(20).default(3),
   observeIssues: z.boolean().default(false), observePulls: z.boolean().default(false), observeComments: z.boolean().default(false),
-  observeCi: z.boolean().default(false) }).strict()
+  observeCi: z.boolean().default(false), observePrCi: z.boolean().default(false),
+  // The panel edits this as comma-separated text; the schema splits it into file names so runtime config is always an array.
+  watchWorkflows: z.preprocess(value => typeof value === 'string' ? value.split(/[,\s]+/).filter(Boolean) : value,
+    z.array(WorkflowFileSchema).max(8).default([])) }).strict()
 export type GithubConfig = z.infer<typeof GithubConfigSchema>
-const OBSERVED = { issues: 'observeIssues', pulls: 'observePulls', comments: 'observeComments', ci: 'observeCi' } as const
-type Scope = keyof typeof OBSERVED
+const OBSERVED = { issues: 'observeIssues', pulls: 'observePulls', comments: 'observeComments', ci: 'observeCi', prCi: 'observePrCi' } as const
+type Scope = keyof typeof OBSERVED | 'runs'
 function scopeOf(meta: Record<string, unknown>): Scope | undefined {
-  if (meta.ci === true) return typeof meta.branch === 'string' ? 'ci' : undefined
+  if (meta.ci === true) {
+    if (meta.run === true) return 'runs'
+    return typeof meta.branch === 'string' ? 'ci' : 'prCi'
+  }
   if (meta.kind === 'issue') return 'issues'
   if (meta.kind === 'pull') return 'pulls'
   return meta.kind === 'conversation' || meta.kind === 'inline' || meta.kind === 'review' ? 'comments' : undefined
@@ -54,11 +62,16 @@ export const githubKind: SourceKind<GithubConfig> = {
     { key: 'observeComments', type: 'switch', label: { zh: '接收仓库里的评论', en: 'Receive comments in the repository' },
       hint: { zh: '打开后，Issue 和 PR 上没有 @ 智能体的评论和代码评论也会收到，由策略的接收表决定是否成为候选。', en: 'Comments and review comments on Issues and PRs that do not mention the agent are received too, and the Policy\'s admission table decides whether they become candidates.' } },
     { key: 'observeCi', type: 'switch', label: { zh: '接收默认分支的 CI', en: 'Receive the default branch\'s CI' },
-      hint: { zh: '打开后，默认分支的 CI 失败和恢复会收到，由策略的接收表决定是否成为候选。', en: 'Failures of the default branch\'s CI, and its recovery, are received, and the Policy\'s admission table decides whether they become candidates.' } }],
+      hint: { zh: '打开后，默认分支的 CI 失败和恢复会收到，由策略的接收表决定是否成为候选。', en: 'Failures of the default branch\'s CI, and its recovery, are received, and the Policy\'s admission table decides whether they become candidates.' } },
+    { key: 'observePrCi', type: 'switch', label: { zh: '接收所有 open PR 的 CI', en: 'Receive CI of all open pull requests' },
+      hint: { zh: '打开后，仓库里每个 open PR 的 CI 失败和恢复会收到，由策略的接收表决定是否成为候选。', en: 'Failures and recovery of every open pull request\'s CI are received, and the Policy\'s admission table decides whether they become candidates.' } },
+    { key: 'watchWorkflows', type: 'text', label: { zh: '监视的 workflow 文件', en: 'Watched workflow files' },
+      hint: { zh: '逗号分隔的 workflow 文件名（如 nightly.yml, release.yml, package.yml，最多 8 个）。这些 workflow 每次运行完成都会收到，由策略的接收表决定是否成为候选。', en: 'Comma-separated workflow file names (such as nightly.yml, release.yml, package.yml; at most 8). Each completed run of these workflows is received, and the Policy\'s admission table decides whether they become candidates.' } }],
   // What the Source observes across the repository it receives in full; elsewhere, only what addresses the agent.
   scope: ({ meta }, config) => {
     const row = scopeOf(meta)
-    return { listened: true, observed: row !== undefined && config[OBSERVED[row]], ...row ? { row } : {} }
+    const observed = row === undefined ? false : row === 'runs' ? config.watchWorkflows.length > 0 : config[OBSERVED[row]]
+    return { listened: true, observed, ...row ? { row } : {} }
   },
   health: ['github'],
   channel: { send: sendGithub, link: githubLink },
@@ -80,13 +93,17 @@ export const githubKind: SourceKind<GithubConfig> = {
     rows(stored) {
       const config = GithubConfigSchema.partial().parse(stored)
       const note = (observed: boolean | undefined) => observed ? { zh: '全部', en: 'All' } : { zh: '仅 @', en: '@ only' }
-      const row = (id: Scope, label: { zh: string; en: string }) => ({ id, label, note: note(config[OBSERVED[id]]),
+      const row = (id: keyof typeof OBSERVED, label: { zh: string; en: string }) => ({ id, label, note: note(config[OBSERVED[id]]),
         cells: { listedUnaddressed: !!config[OBSERVED[id]], unlistedAddressed: true, unlistedUnaddressed: !!config[OBSERVED[id]] } })
+      // CI has no sender, so only the cell of a sender off the list who does not address the agent applies.
+      const ciRow = (id: 'ci' | 'prCi' | 'runs', label: { zh: string; en: string }, observed: boolean) => ({ id, label,
+        note: observed ? { zh: '接收', en: 'Received' } : { zh: '不接收', en: 'Not received' },
+        cells: { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: observed } })
       return [row('issues', { zh: '新 Issue', en: 'New Issues' }), row('pulls', { zh: '新 PR', en: 'New pull requests' }),
         row('comments', { zh: '评论', en: 'Comments' }),
-        // CI has no sender, so only the cell of a sender off the list who does not address the agent applies.
-        { id: 'ci', label: { zh: '默认分支的 CI', en: 'Default branch CI' }, note: config.observeCi ? { zh: '接收', en: 'Received' } : { zh: '不接收', en: 'Not received' },
-          cells: { listedUnaddressed: false, unlistedAddressed: false, unlistedUnaddressed: !!config.observeCi } }]
+        ciRow('ci', { zh: '默认分支的 CI', en: 'Default branch CI' }, !!config.observeCi),
+        ciRow('prCi', { zh: 'PR 的 CI', en: 'Pull request CI' }, !!config.observePrCi),
+        ciRow('runs', { zh: 'Workflow 运行', en: 'Workflow runs' }, (config.watchWorkflows?.length ?? 0) > 0)]
     },
   },
   environment: {
@@ -182,7 +199,7 @@ const STREAMS = [
   { id: 'comments', observed: (config: GithubConfig) => config.observeComments, path: 'issues/comments?' },
   { id: 'review-comments', observed: (config: GithubConfig) => config.observeComments, path: 'pulls/comments?' },
 ] as const
-/** Polls repository-wide streams (new Issues/PRs, comments, default-branch CI); each stream reads from when it was switched on, resets when switched off, and fails independently. */
+/** Polls repository-wide streams (new Issues/PRs, comments), default-branch CI, open-PR CI, and watched workflow runs; each step reads from when it was switched on, resets when switched off, and fails independently. */
 async function pollRepository(ctx: SourceContext, round: Round): Promise<void> {
   const stored = ctx.config<GithubConfig>(SOURCE)
   if (!stored) return
@@ -200,10 +217,18 @@ async function pollRepository(ctx: SourceContext, round: Round): Promise<void> {
   if (!config.observeCi) {
     const seen = ctx.state.get(KV.github.branchCi)
     ctx.state.set(KV.github.branchCi, seen && { revision: seen.revision })
-    return
+  } else {
+    try { await pollBranchCi(ctx, round) }
+    catch (error) { if (!stopped(ctx, round)) round.failures.push(`default branch CI: ${String(error)}`) }
   }
-  try { await pollBranchCi(ctx, round) }
-  catch (error) { if (!stopped(ctx, round)) round.failures.push(`default branch CI: ${String(error)}`) }
+  if (config.observePrCi) {
+    try { await pollPrCi(ctx, round) }
+    catch (error) { if (!stopped(ctx, round)) round.failures.push(`open PR CI: ${String(error)}`) }
+  }
+  if (config.watchWorkflows.length) {
+    try { await pollWorkflowRuns(ctx, round, config.watchWorkflows) }
+    catch (error) { if (!stopped(ctx, round)) round.failures.push(`workflow runs: ${String(error)}`) }
+  }
 }
 /**
  * Polls one repository-wide event stream (oldest first) since its cursor and steps the cursor to five seconds before the
@@ -281,7 +306,7 @@ async function pollBranchCi(ctx: SourceContext, round: Round): Promise<void> {
     revision += 1
     const summary = ciSummary(snapshot, branch, `github/commits/${head.sha}/checks`)
     const url = `https://github.com/${ctx.deployment.repository}/commit/${head.sha}`
-    await ctx.receive(branchCiTrigger(branch, head.sha, revision, summary, url))
+    await ctx.receive(branchCiTrigger(branch, head.sha, revision, summary, url, now.length > 0))
     ctx.threads.describe(`github:ci:${branch}`, { label: `CI on ${branch}`, facts: { ci: ciFact(counts) } })
   }
   ctx.state.set(KV.github.branchCi, { branch, failures: now, revision })
@@ -435,9 +460,56 @@ async function pollChecks(ctx: SourceContext, round: Round, number: number, pr: 
   const previous = ctx.state.get(KV.github.ci(number))
   if (previous?.fingerprint === fingerprint) return
   const revision = previous ? previous.revision + 1 : 0
-  if (previous) await ctx.receive(ciTrigger(pr, revision, ciSummary(snapshot, `PR #${number}`, `github/pulls/${number}/checks`)))
+  const counts = ciCounts(snapshot)
+  if (previous) await ctx.receive(ciTrigger(pr, revision, ciSummary(snapshot, `PR #${number}`, `github/pulls/${number}/checks`), counts.failed > 0))
   ctx.state.set(KV.github.ci(number), { fingerprint, revision })
-  ctx.threads.describe(`github:${number}`, { facts: { ci: ciFact(ciCounts(snapshot)) } })
+  ctx.threads.describe(`github:${number}`, { facts: { ci: ciFact(counts) } })
+}
+/** The most recently updated open PRs whose CI is polled each round, capped so a busy repository does not exhaust the rate limit. */
+const PR_CI_LIMIT = 50
+const OpenPullSchema = PullSchema.extend({ number: z.number() })
+/** Polls CI checks of the most recently updated open PRs, reusing each PR's fingerprint baseline so a PR already polled this round is a no-op. */
+async function pollPrCi(ctx: SourceContext, round: Round): Promise<void> {
+  const listed = await ctx.commands.withSignal(round.signal).api(z.array(z.unknown()), 'pulls?state=open&sort=updated&direction=desc&per_page=100')
+  for (const pr of validItems(OpenPullSchema, listed, round.tally).slice(0, PR_CI_LIMIT)) {
+    if (stopped(ctx, round)) return
+    try { await pollChecks(ctx, round, pr.number, pr) }
+    catch (error) { if (!stopped(ctx, round)) failed(ctx, round, pr.number, error) }
+  }
+}
+const WorkflowRunSchema = z.looseObject({ id: z.number(), conclusion: z.string().nullable(), event: z.string(),
+  head_branch: z.string().nullable(), head_sha: z.string(), html_url: z.string() })
+const RunJobsSchema = z.looseObject({ jobs: z.array(z.looseObject({ name: z.string(), conclusion: z.string().nullable() })) })
+const RUN_FAILING = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure'])
+/**
+ * Polls completed runs of each watched workflow, emitting one trigger per newly completed run. The first observation of a
+ * workflow baselines its completed runs without replaying history; later polls emit runs whose ID is not yet seen, so a run
+ * that completes out of order is still reported once. A failed or cancelled run also reads its jobs to name the failures.
+ */
+async function pollWorkflowRuns(ctx: SourceContext, round: Round, workflows: string[]): Promise<void> {
+  const commands = ctx.commands.withSignal(round.signal)
+  for (const file of workflows) {
+    if (stopped(ctx, round)) return
+    try {
+      const listed = await commands.api(z.looseObject({ workflow_runs: z.array(z.unknown()) }), `actions/workflows/${encodeURIComponent(file)}/runs?status=completed&per_page=100`)
+      const runs = validItems(WorkflowRunSchema, listed.workflow_runs, round.tally)
+      const cursor = KV.github.workflowRun(file)
+      const previous = ctx.state.get(cursor)
+      const seen = new Set(previous?.seen ?? [])
+      if (previous) for (const run of runs) {
+        if (stopped(ctx, round)) return
+        if (seen.has(run.id)) continue
+        const runFailed = RUN_FAILING.has(run.conclusion ?? '')
+        const jobs = runFailed ? await commands.api(RunJobsSchema, `actions/runs/${run.id}/jobs?per_page=100`) : { jobs: [] }
+        const failedJobs = jobs.jobs.filter(job => RUN_FAILING.has(job.conclusion ?? '')).map(job => job.name)
+        const url = run.html_url || `https://github.com/${ctx.deployment.repository}/actions/runs/${run.id}`
+        await ctx.receive(workflowRunTrigger({ workflow: file, runId: run.id, conclusion: run.conclusion ?? 'unknown', event: run.event,
+          branch: run.head_branch ?? '', sha: run.head_sha, url, failedJobs }))
+        ctx.threads.describe(`github:run:${file}`, { label: `Workflow ${file}`, facts: { ci: ciFact({ failed: runFailed ? 1 : 0, running: 0 }) } })
+      }
+      ctx.state.set(cursor, { seen: runs.map(run => run.id) })
+    } catch (error) { if (!stopped(ctx, round)) round.failures.push(`workflow ${file}: ${String(error)}`) }
+  }
 }
 function nameThread(ctx: SourceContext, number: number, title: string): void {
   ctx.threads.patch(`github:${number}`, { title })
@@ -455,8 +527,8 @@ export async function pollThreads(ctx: SourceContext, signal?: AbortSignal, roun
   }, thread => round.read.has(Number(thread.ref.id)))
 }
 async function pollThread(ctx: SourceContext, round: Round, thread: Thread): Promise<void> {
-  // The default branch's CI Thread has no Issue or PR to read; its CI arrives as Triggers.
-  if (thread.ref.id.startsWith('ci:')) return
+  // CI and workflow-run Threads have no Issue or PR to read; their CI arrives as Triggers.
+  if (thread.ref.id.startsWith('ci:') || thread.ref.id.startsWith('run:')) return
   const number = Number(thread.ref.id)
   if (!number) throw new Error('Subscribed thread has no GitHub issue or PR number')
   round.read.add(number)

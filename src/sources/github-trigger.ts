@@ -94,15 +94,37 @@ export function issueTrigger(issue: Opened, agent: string): Trigger {
 export function pullTrigger(pull: Opened, agent: string): Trigger {
   return { ...issueTrigger(pull, agent), meta: { number: pull.number, isPr: true, prAuthor: pull.user.login, kind: 'pull' } }
 }
-/** Builds a trigger for a default-branch CI transition; default-branch CI has no person to reply to, so it has no `channel`. */
-export function branchCiTrigger(branch: string, sha: string, revision: number, summary: string, url: string): Trigger {
+/** Builds a trigger for a default-branch CI transition; default-branch CI has no person to reply to, so it has no `channel`. `failed` marks a failure rather than a recovery. */
+export function branchCiTrigger(branch: string, sha: string, revision: number, summary: string, url: string, failed: boolean): Trigger {
   return { id: key('github-ci', `branch:${branch}`, String(revision)), source: SOURCE,
     threads: [{ source: SOURCE, id: `ci:${branch}` }], actor: { source: SOURCE, id: '' }, human: false, at: new Date().toISOString(),
-    text: summary, url, meta: { ci: true, branch, sha, revision } }
+    text: summary, url, meta: { ci: true, branch, sha, revision, failed } }
 }
-export function ciTrigger(pr: { number: number; html_url: string; user: { login: string } }, revision: number, summary: string): Trigger {
+/** Builds a trigger for a PR's CI transition; `failed` marks a failure rather than a recovery or a still-running snapshot. */
+export function ciTrigger(pr: { number: number; html_url: string; user: { login: string } }, revision: number, summary: string, failed: boolean): Trigger {
   return { id: key('github-ci', String(pr.number), String(revision)), source: SOURCE, threads: [{ source: SOURCE, id: String(pr.number) }],
     actor: { source: SOURCE, id: '' }, human: false, at: new Date().toISOString(),
     text: summary, channel: githubChannel(pr.number), url: pr.html_url,
-    meta: { number: pr.number, isPr: true, prAuthor: pr.user.login, ci: true, revision } }
+    meta: { number: pr.number, isPr: true, prAuthor: pr.user.login, ci: true, revision, failed } }
+}
+/** A completed workflow run observed by the GitHub Source; `failedJobs` names the jobs that failed when the run did. */
+export interface WorkflowRun {
+  workflow: string; runId: number; conclusion: string; event: string; branch: string; sha: string; url: string; failedJobs: string[]
+}
+/** Run conclusions that count as a failure rather than a success, neutral result, or skip. */
+const RUN_FAILED = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure'])
+/**
+ * Builds the trigger for a completed workflow run (such as nightly, release, or package). A run Thread has no Issue or PR
+ * conversation, so the text is self-contained: the workflow, conclusion, event, branch, sha, failed jobs, and run URL are
+ * all the assessment reads. The ID is the literal `github-run:<workflow>:<runId>`, so polling the same completed run twice is a no-op.
+ */
+export function workflowRunTrigger(run: WorkflowRun): Trigger {
+  const failed = RUN_FAILED.has(run.conclusion)
+  const lines = [`Workflow ${run.workflow} run #${run.runId} ${run.conclusion} (${run.event}) on ${run.branch || 'an unknown branch'} at ${run.sha.slice(0, 7)}.`]
+  if (run.failedJobs.length) lines.push(`Failed jobs: ${run.failedJobs.join(', ')}.`)
+  lines.push(`Read ${run.url} for the run, its jobs, and their logs.`)
+  return { id: `github-run:${run.workflow}:${run.runId}`, source: SOURCE,
+    threads: [{ source: SOURCE, id: `run:${run.workflow}` }], actor: { source: SOURCE, id: '' }, human: false, at: new Date().toISOString(),
+    text: lines.join('\n'), url: run.url,
+    meta: { ci: true, run: true, workflow: run.workflow, runId: run.runId, conclusion: run.conclusion, event: run.event, branch: run.branch, sha: run.sha, failed } }
 }

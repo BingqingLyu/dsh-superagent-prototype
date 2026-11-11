@@ -65,6 +65,8 @@ export interface ContextPart { messages: ContextMessage[]; next?: string | undef
 export interface ThreadContext<C> {
   /** The ID of the Trigger's own message among the messages of its Thread. */
   messageId(trigger: Trigger): string
+  /** True when this Trigger has no Thread conversation to read (such as a workflow run), so its assessment reads only the Trigger's own text. */
+  contextless?(trigger: Trigger): boolean
   /** Reads a page of thread messages (`thread`, first page when `cursor` is omitted), the topic root (`root`), or the replied-to message (`parent`). */
   read(commands: Commands, trigger: Trigger, part: ContextPartName, cursor: string | undefined, config: C): Promise<ContextPart>
   /** Extracts image keys from message text that `image` can read; omitted for kinds without image support. */
