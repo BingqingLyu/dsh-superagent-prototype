@@ -47,6 +47,30 @@ These steps start a fresh installation. Runtime state, credentials, ticket workt
 
 ## Settings and state
 
+### GitHub App identity
+
+Install your GitHub App on the target repository. Grant repository permissions Contents, Pull requests and Issues as read/write, and Checks and Actions as read for CI inspection. Metadata read access is implicit. Download an App private key onto the service machine; keep the PEM file outside the checkout and restrict its file permissions to the service user.
+
+For a new state directory, set `SUPERAGENT_GITHUB_AUTH=app`, `SUPERAGENT_GITHUB_APP_ID`, `SUPERAGENT_GITHUB_INSTALLATION_ID` and `SUPERAGENT_GITHUB_PRIVATE_KEY_PATH` before the first start. `SUPERAGENT_GITHUB_CLI` still names the real `gh` executable. This installation uses its own `neug-agent[bot]` identity rather than the host's personal login.
+
+For an existing installation, environment variables do not replace saved Source settings. Read `GET /orchestrator/api/settings`, keep the current GitHub block's configuration and revision, then save it with `PUT /orchestrator/api/settings/source:github` and the `x-orchestrator-request: 1` header. Add this object to the existing `value.config`:
+
+```json
+{
+  "app": {
+    "appId": "123456",
+    "installationId": "12345678",
+    "privateKeyPath": "/absolute/path/to/neug-agent.pem"
+  }
+}
+```
+
+Keep `repository`, `cli` and observation settings in that configuration. The `cli` must remain the real GitHub CLI, not a generated `stateDir/github-app/.../gh-app` wrapper. Saving validates the App installation and requests a service restart. To return to personal authentication, remove `app` and save again.
+
+The service caches repository-scoped installation tokens in its private state directory and refreshes them five minutes before expiry. Service commands, worker `gh` commands and Git's credential helper all use the same App wrapper. There is no personal-login fallback. Git commits still follow the existing explicit author policy; authenticating pushes as an App does not rewrite commit authors.
+
+App installations have no personal notification inbox. App mode polls repository Issue/PR and comment streams instead to discover mentions, and reads reviews on changed PRs and subscribed threads. Existing observation switches, policy gates, cursors and deduplication still apply; enabling App authentication does not enable proactive work or group broadcasts. Polling uses the original initial-baseline behavior rather than replaying repository history.
+
 For macOS CLI credentials stored in Keychain, keep the sandbox and use Codex's native execution rules for the intended commands. Install [codex-readonly.rules](../codex-readonly.rules) as `~/.codex/rules/superagent-readonly.rules` and restart the service. It permits only `gh pr list/view/checks` to run with host permissions; it neither copies tokens nor changes login state. Every subsequent Worker inherits the same native rules. Other tools can use the same operator-managed rule mechanism; they do not require separate credential-injection code. The adapter uses `on-request` with user review, and declines unresolved approval prompts in headless mode instead of auto-granting them. Model subagents remain disabled.
 
 An authentication failure inside a sandbox does not prove the host login expired. Test the configured native command rule before asking the user to log in again. `workspace-write` alone does not grant macOS Keychain access.

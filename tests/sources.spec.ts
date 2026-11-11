@@ -1193,6 +1193,35 @@ describe('observing the GitHub repository', () => {
     html_url: `https://github.com/acme/widgets/issues/${number}`, user: { login: 'carol', type: 'User' }, ...fields })
   const observe = (h: ReturnType<typeof host>, config: Record<string, boolean>) =>
     h.store.saveSettings({ ...h.store.settings(), sources: { ...h.store.settings().sources, github: { enabled: true, config } } })
+  it('discovers App mentions and reviews through repository streams without a personal notification inbox', async () => {
+    const base = testDeployment()
+    const h = host({ deployment: { ...base, github: { ...base.github, auth: 'app', login: 'agent-bot[bot]' } } })
+    observe(h, {}) // Repository-wide proactive observation remains off; mentions must still be discovered.
+    h.store.set('github-stream:issues', { since: at(0), started: { issues: at(0), pulls: at(0) } })
+    h.store.set('github-stream:comments', { since: at(0), started: { comments: at(0) } })
+    const calls: string[] = []
+    vi.spyOn(h.commands, 'run').mockImplementation(async (_program, args) => {
+      const path = args[1]!.replace(/^repos\/acme\/widgets\/?/, '').split('?')[0]!
+      calls.push(path)
+      const included = (items: unknown[]) => `HTTP/2.0 200 OK\r\n\r\n${JSON.stringify(items)}`
+      if (path.includes('notifications')) throw new Error('Installation tokens have no inbox')
+      if (path === 'issues') return included([{ ...issue(5, { created_at: at(-24), updated_at: at(2) }), pull_request: { url: 'x' } }])
+      if (path === 'issues/comments') return included([{ id: 88, body: '@agent-bot[bot] please check',
+        user: { login: 'alice', type: 'User' }, updated_at: at(2), issue_url: 'https://api.github.com/repos/acme/widgets/issues/6' }])
+      if (path === 'pulls/comments') return included([])
+      if (path === 'pulls/5') return JSON.stringify({ ...openPull(5), user: { login: 'carol', type: 'User' }, created_at: at(-24) })
+      if (path === 'pulls/5/reviews') return JSON.stringify([[{ id: 77, user: { login: 'alice', type: 'User' },
+        body: 'Approved', state: 'APPROVED', submitted_at: at(2) }]])
+      return JSON.stringify([[]])
+    })
+    try {
+      await pollRound(h)
+      expect(calls.some(path => path.includes('notifications'))).toBe(false)
+      expect(h.receive.mock.calls.some(([trigger]) => trigger.meta.kind === 'review')).toBe(true)
+      expect(h.receive.mock.calls.some(([trigger]) => trigger.meta.number === 6 && trigger.addressed === 'mention')).toBe(true)
+      expect(h.sources.instance('github')!.config.observeComments).toBe(false)
+    } finally { h.store.close() }
+  })
   /** GitHub as the repository's lists and its default branch answer; a request with the ETag of an unchanged list answers 304. */
   function repository(h: ReturnType<typeof host>, answers: { issues?: unknown[]; comments?: unknown[]; reviewComments?: unknown[];
     branch?: { sha: string; checks: unknown[] } }) {

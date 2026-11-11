@@ -14,6 +14,7 @@ import type { Machine } from './deployment.ts'
 import { CodexHarness } from './harness/codex.ts'
 import { DingTalk, dingTalkKind } from './sources/dingtalk.ts'
 import { githubKind, watchGithub } from './sources/github.ts'
+import { GithubAppSchema } from './infra/github-app.ts'
 
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`
 const reference = <T>(value: T) => ({ get: () => value })
@@ -32,6 +33,11 @@ async function main(): Promise<void> {
   const stateDir = resolve(process.env.SUPERAGENT_STATE_DIR ?? './state-codex')
   const sandbox = z.enum(['read-only', 'workspace-write', 'danger-full-access']).parse(process.env.CODEX_SANDBOX ?? 'workspace-write')
   const port = z.coerce.number().int().min(1).max(65535).parse(process.env.SUPERAGENT_PORT ?? 3082)
+  const githubAuth = z.enum(['user', 'app']).parse(process.env.SUPERAGENT_GITHUB_AUTH ?? 'user')
+  const githubApp = githubAuth === 'app' ? GithubAppSchema.parse({
+    appId: process.env.SUPERAGENT_GITHUB_APP_ID, installationId: process.env.SUPERAGENT_GITHUB_INSTALLATION_ID,
+    privateKeyPath: process.env.SUPERAGENT_GITHUB_PRIVATE_KEY_PATH,
+  }) : undefined
   mkdirSync(stateDir, { recursive: true, mode: 0o700 })
   // Seed installation settings once using the original schema/store; subsequent settings retain their original history.
   const release = lockSync(stateDir)
@@ -46,7 +52,8 @@ async function main(): Promise<void> {
           return match[1]!
         })()
         store.saveSettings(SettingsSchema.parse({
-          sources: { github: { enabled: true, config: { repository: remote, cli: process.env.SUPERAGENT_GITHUB_CLI ?? 'gh' } },
+          sources: { github: { enabled: true, config: { repository: remote, cli: process.env.SUPERAGENT_GITHUB_CLI ?? 'gh',
+            ...(githubApp ? { app: githubApp } : {}) } },
             dingtalk: { enabled: true, config: {} } },
           // Use the original admission table to allow every mentioned sender; no new gate or whitelist implementation.
           policy: { sources: { dingtalk: { allowed: [], admission: { group: { unlistedAddressed: 'explicit' } } } } },

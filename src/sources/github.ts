@@ -181,8 +181,12 @@ const STREAMS = [
 ] as const
 /** Polls repository-wide streams (new Issues/PRs, comments, default-branch CI); each stream reads from when it was switched on, resets when switched off, and fails independently. */
 async function pollRepository(ctx: SourceContext, round: Round): Promise<void> {
-  const config = ctx.config<GithubConfig>(SOURCE)
-  if (!config) return
+  const stored = ctx.config<GithubConfig>(SOURCE)
+  if (!stored) return
+  // App installations have no personal notification inbox. Read repository streams to discover mentions;
+  // the unchanged Source configuration and policy still decide which unaddressed events are admitted.
+  const config = ctx.deployment.github.auth === 'app'
+    ? { ...stored, observeIssues: true, observePulls: true, observeComments: true } : stored
   for (const stream of STREAMS) {
     if (stopped(ctx, round)) return
     if (!stream.observed(config)) { ctx.state.set(KV.github.stream(stream.id), undefined); continue }
@@ -232,6 +236,11 @@ async function readStream(ctx: SourceContext, round: Round, id: string, path: st
     if (id === 'issues') {
       const issue = IssueSchema.safeParse(item)
       const pr = issue.success && !!issue.data.pull_request
+      if (issue.success && pr && ctx.deployment.github.auth === 'app') {
+        round.read.add(issue.data.number)
+        await readNotified(ctx, round, issue.data.number, { since, pr: true })
+        continue
+      }
       if (!issue.success || !fresh(issue.data.created_at, pr ? 'pulls' : 'issues')) continue
       await ctx.receive(pr ? pullTrigger(issue.data, login) : issueTrigger(issue.data, login))
       nameThread(ctx, issue.data.number, issue.data.title)
@@ -283,7 +292,8 @@ async function pollBranchCi(ctx: SourceContext, round: Round): Promise<void> {
  */
 export async function pollRound(ctx: SourceContext, signal?: AbortSignal): Promise<number> {
   const round = newRound(signal)
-  const notified = await pollNotifications(ctx, round).then(value => ({ value }), (error: unknown) => ({ error }))
+  const notified = await (ctx.deployment.github.auth === 'app' ? Promise.resolve({ count: 0, interval: 60 })
+    : pollNotifications(ctx, round)).then(value => ({ value }), (error: unknown) => ({ error }))
   await pollRepository(ctx, round)
   await pollTicketPulls(ctx, signal, round)
   await pollThreads(ctx, signal, round)
@@ -295,7 +305,7 @@ export async function pollRound(ctx: SourceContext, signal?: AbortSignal): Promi
   const dropped = (round.dropped.length ? `; deleted on GitHub: ${named(round.dropped)}` : '')
     + (round.abandoned.length ? `; dropped after their reads kept failing: ${named(round.abandoned)}` : '')
     + (round.tally.skipped ? `; ${round.tally.skipped} unreadable items skipped` : '')
-  ctx.report('github', { state: 'ready', detail: `${count} notifications; next poll ≥ ${interval}s${dropped}`, at: round.started })
+  ctx.report('github', { state: 'ready', detail: `${ctx.deployment.github.auth === 'app' ? 'App repository polling' : `${count} notifications`}; next poll ≥ ${interval}s${dropped}`, at: round.started })
   return interval
 }
 /** Reads notifications since the cursor and each Issue or PR they name, advancing the cursor atomically with the retry map for failed reads; deleted (410) Issues are dropped once their error is recorded. */

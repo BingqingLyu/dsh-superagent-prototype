@@ -733,6 +733,7 @@ const TEXT = {
   'setup.agentCliMissing': ['找不到智能体的 GitHub CLI。', SETUP_PROBLEMS.agentCliMissing[1]],
   'setup.agentCliSignedOut': ['智能体的 GitHub CLI 读不到它的账号。', SETUP_PROBLEMS.agentCliSignedOut[1]],
   'setup.agentCliNoAccount': ['智能体的 GitHub CLI 没有报告 GitHub 账号。', SETUP_PROBLEMS.agentCliNoAccount[1]],
+  'setup.githubAppFailed': ['GitHub App 初始化失败，请检查 App ID、安装 ID、私钥、仓库授权及 Contents/Pull requests/Issues 写权限。', SETUP_PROBLEMS.githubAppFailed[1]],
   'setup.repositoryUnreadable': ['@{account} 读不到 {repository}。', SETUP_PROBLEMS.repositoryUnreadable[1]],
   'setup.repositoryUnreported': ['智能体的 GitHub CLI 没有返回 {repository}。', SETUP_PROBLEMS.repositoryUnreported[1]],
   'setup.repositoryReadOnly': ['@{account} 没有 {repository} 的推送权限。', SETUP_PROBLEMS.repositoryReadOnly[1]],

@@ -8,6 +8,7 @@ import { z } from 'zod'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { runAsWorker, sameDirectory, withoutDirectory, workerBin } from './infra/environment.ts'
 import { SetupError } from './setup.ts'
+import { GithubAppSchema, appJwt, appRequest, installationToken, writeAppCli } from './infra/github-app.ts'
 
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const absolute = (description: string) => s.string().pattern(/^\//).description(`${description} Absolute path.`)
@@ -45,6 +46,7 @@ export function machineOf(config: DeploymentConfig): Machine {
 export const GithubAccountsSchema = z.object({
   repository: z.string().trim().regex(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?$/, 'owner/name').default(''),
   cli: z.string().trim().default(''),
+  app: GithubAppSchema.optional(),
 })
 export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
 /** Source configuration keys that affect deployment setup and trigger a restart when changed. */
@@ -52,7 +54,7 @@ export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { githu
 
 export interface Deployment extends Machine {
   repository: string
-  github: { cli: string; login: string; noreply: string }
+  github: { cli: string; login: string; noreply: string; auth?: 'app' }
   feishu?: FeishuBot
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
@@ -92,6 +94,28 @@ export async function resolveDeployment(machine: Machine, github: unknown, probe
   if (!accounts.cli) throw new SetupError('agentCliUnset')
   let cli: string
   try { cli = executable(accounts.cli, path, workerBin(stateDir)) } catch (error) { throw new SetupError('agentCliMissing', { output: reason(error) }) }
+  if (accounts.app) {
+    try {
+      const app = accounts.app
+      const jwt = await appJwt(app)
+      const identity = z.object({ id: z.number(), slug: z.string().regex(/^[A-Za-z0-9-]+$/) }).parse(await appRequest('/app', jwt))
+      const installation = z.object({ app_id: z.number(), account: z.object({ login: z.string() }) })
+        .parse(await appRequest(`/app/installations/${app.installationId}`, jwt))
+      if (String(identity.id) !== app.appId || installation.app_id !== identity.id
+        || installation.account.login.toLowerCase() !== remote.split('/')[0]!.toLowerCase()) throw new Error('Installation mismatch')
+      const config = { app, repository: remote, stateDir, cli }
+      const credential = await installationToken(config)
+      if (['contents', 'pull_requests', 'issues'].some(permission => credential.permissions[permission] !== 'write')) {
+        throw new Error('App requires Contents, Pull requests and Issues write permissions')
+      }
+      const repository = z.object({ full_name: z.string() }).parse(await appRequest(`/repos/${remote}`, credential.token)).full_name
+      const login = `${identity.slug}[bot]`
+      const bot = z.object({ id: z.number().int().positive(), login: z.literal(login) })
+        .parse(await appRequest(`/users/${encodeURIComponent(login)}`, credential.token))
+      return { ...machine, repository, github: { cli: await writeAppCli(config), auth: 'app', login,
+        noreply: `${bot.id}+${login}@users.noreply.github.com` } }
+    } catch { throw new SetupError('githubAppFailed') }
+  }
   const text = await probe([cli, 'api', 'user']).catch((error: unknown) => { throw new SetupError('agentCliSignedOut', { output: reason(error) }) })
   const agent = parsed(GithubUser, text)
   if (!agent) throw new SetupError('agentCliNoAccount')

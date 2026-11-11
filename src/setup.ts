@@ -11,6 +11,7 @@ export const SETUP_PROBLEMS = {
   agentCliMissing: ['github', 'The agent GitHub CLI was not found.'],
   agentCliSignedOut: ['github', 'The agent GitHub CLI cannot read its account.'],
   agentCliNoAccount: ['github', 'The agent GitHub CLI did not report a GitHub account.'],
+  githubAppFailed: ['github', 'GitHub App setup failed. Check the App ID, installation ID, private key, repository access and Contents/Pull requests/Issues write permissions.'],
   repositoryUnreadable: ['github', '@{account} cannot read {repository}.'],
   repositoryUnreported: ['github', 'The agent GitHub CLI did not return {repository}.'],
   repositoryReadOnly: ['github', '@{account} cannot push to {repository}.'],
